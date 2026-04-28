@@ -3,6 +3,6 @@
 // 本包提供顶层 Client 门面，聚合 clob / gamma / ws / signer 子包，
 // 用于下游 liquidity-service 等场景一站式接入 pm-cup2026 公开 API。
 //
-// 当前版本：v0.1.0（开发中），仅 Phase 1 骨架已落地。
-// 完整接口契约见 docs/contract.md（来源于 pm-cup2026-liquidity 设计文档）。
+// 当前版本：v0.1.0。完整变更见 CHANGELOG.md。
+// 权威接口契约见 pm-cup2026-liquidity 仓 docs/design-docs/pm-sdk-go-contract.md。
 package pmsdkgo
