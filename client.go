@@ -12,13 +12,13 @@ import (
 
 // Client 是 pm-sdk-go 的顶层门面，聚合各业务子包客户端。
 //
-// Phase 3：Clob 字段类型已从 generated *clob.Client 切换到手写门面 *clob.Facade
-// （PlaceOrder / CancelOrder / GetOrder / ListOrders / GetBook / GetTrades）。
-// Gamma 仍是 generated *gamma.Client，将在 Phase 4 替换为 gamma 手写门面；
+// Phase 3：Clob 切换到手写门面 *clob.Facade。
+// Phase 4：Gamma 切换到手写门面 *gamma.Facade（GetEvent / ListEvents /
+// GetMarket / GetToken）。
 // WS 仍是 Phase 1 占位，Phase 5 替换。
 type Client struct {
 	Clob  *clob.Facade
-	Gamma *gamma.Client
+	Gamma *gamma.Facade
 	WS    *ws.Client
 
 	cfg *config
@@ -69,14 +69,14 @@ func New(opts ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	gammaCli, err := gamma.NewClient(cfg.gammaURL)
+	gammaFacade, err := gamma.NewFacade(cfg.gammaURL, cfg.httpClient)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Client{
 		Clob:  clobFacade,
-		Gamma: gammaCli,
+		Gamma: gammaFacade,
 		WS:    ws.NewStub(),
 		cfg:   cfg,
 	}, nil
