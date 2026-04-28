@@ -1,0 +1,33 @@
+# 二进制 / 构建产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+dist/
+
+# vendored 依赖（本仓不使用 vendor）
+vendor/
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 覆盖率报告
+coverage.txt
+coverage.html
+*.coverprofile
+
+# 本地环境
+.env
+.env.local
