@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: build / vet / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: go build
+        run: go build ./...
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.11.4
+
+  codegen-drift:
+    name: codegen drift guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      # Phase 1 仅 stub；Phase 2 起本步骤会实拉 OpenAPI 跑 oapi-codegen，
+      # 然后 git diff --exit-code 校验 pkg/{clob,gamma}/generated.go 不漂移。
+      - name: run codegen
+        run: bash scripts/codegen.sh
+
+      - name: ensure generated files unchanged
+        run: git diff --exit-code

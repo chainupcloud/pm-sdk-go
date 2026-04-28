@@ -1,0 +1,19 @@
+version: "2"
+
+# 基础配置：仅启用稳定的核心 linter，Phase 1 骨架阶段保持宽松
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+  exclusions:
+    rules:
+      # 占位 stub 阶段允许 _ 命名参数与未使用的函数
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unused
