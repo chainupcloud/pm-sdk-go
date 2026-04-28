@@ -6,6 +6,7 @@ import (
 
 	"github.com/chainupcloud/pm-sdk-go/pkg/clob"
 	"github.com/chainupcloud/pm-sdk-go/pkg/gamma"
+	"github.com/chainupcloud/pm-sdk-go/pkg/obs"
 	"github.com/chainupcloud/pm-sdk-go/pkg/signer"
 	"github.com/chainupcloud/pm-sdk-go/pkg/ws"
 )
@@ -36,6 +37,7 @@ type config struct {
 	userAgent   string
 	signer      signer.Signer
 	logger      Logger
+	metrics     Metrics
 	rateLimit   int // requests per second; 0 表示不限速
 
 	// wsUserAuth 是 ws 用户频道凭证（SubscribeOrders 必需）；nil 时 SubscribeOrders 报 ErrSign。
@@ -48,7 +50,8 @@ func defaults() *config {
 		httpTimeout: 30 * time.Second,
 		httpClient:  http.DefaultClient,
 		userAgent:   "pm-sdk-go/0.1.0",
-		logger:      nopLogger{},
+		logger:      obs.NopLogger{},
+		metrics:     obs.NopMetrics{},
 	}
 }
 
@@ -65,19 +68,28 @@ func New(opts ...Option) (*Client, error) {
 		opt(cfg)
 	}
 
-	clobOpts := []clob.FacadeOption{}
+	clobOpts := []clob.FacadeOption{
+		clob.WithLogger(cfg.logger),
+		clob.WithMetrics(cfg.metrics),
+	}
 	if cfg.signer != nil {
-		clobOpts = append(clobOpts, clob.WithSigner(cfg.signer))
+		clobOpts = append(clobOpts, clob.WithSigner(wrapSignerObs(cfg.signer, cfg.logger, cfg.metrics)))
 	}
 	clobFacade, err := clob.NewFacade(cfg.clobURL, cfg.httpClient, clobOpts...)
 	if err != nil {
 		return nil, err
 	}
-	gammaFacade, err := gamma.NewFacade(cfg.gammaURL, cfg.httpClient)
+	gammaFacade, err := gamma.NewFacade(cfg.gammaURL, cfg.httpClient,
+		gamma.WithLogger(cfg.logger),
+		gamma.WithMetrics(cfg.metrics),
+	)
 	if err != nil {
 		return nil, err
 	}
-	wsOpts := []ws.FacadeOption{}
+	wsOpts := []ws.FacadeOption{
+		ws.WithLogger(cfg.logger),
+		ws.WithMetrics(cfg.metrics),
+	}
 	if cfg.wsUserAuth != nil {
 		wsOpts = append(wsOpts, ws.WithUserAuth(*cfg.wsUserAuth))
 	}

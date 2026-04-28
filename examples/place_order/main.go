@@ -17,12 +17,21 @@ import (
 	"os"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/shopspring/decimal"
+	"go.uber.org/zap"
+
 	pmsdkgo "github.com/chainupcloud/pm-sdk-go"
 	"github.com/chainupcloud/pm-sdk-go/pkg/clob"
-	"github.com/shopspring/decimal"
+	"github.com/chainupcloud/pm-sdk-go/pkg/obs/promobs"
+	"github.com/chainupcloud/pm-sdk-go/pkg/obs/zapobs"
 )
 
 func main() {
+	zl, _ := zap.NewDevelopment()
+	defer func() { _ = zl.Sync() }()
+	registry := prometheus.NewRegistry()
+
 	cli, err := pmsdkgo.New(
 		pmsdkgo.WithEndpoints(
 			"https://clob.example.com",
@@ -30,6 +39,8 @@ func main() {
 			"wss://ws.example.com",
 		),
 		pmsdkgo.WithHTTPTimeout(10*time.Second),
+		pmsdkgo.WithLogger(zapobs.New(zl)),
+		pmsdkgo.WithMetrics(promobs.New(registry)),
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "init sdk:", err)

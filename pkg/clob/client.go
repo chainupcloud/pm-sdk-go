@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/shopspring/decimal"
 
+	"github.com/chainupcloud/pm-sdk-go/pkg/obs"
 	"github.com/chainupcloud/pm-sdk-go/pkg/signer"
 )
 
@@ -24,8 +25,10 @@ import (
 // `OrderType` / `OrderStatus`，本门面命名为 Facade，其余 SDK 类型用 Sdk 前缀
 // 避免冲突；顶层 pmsdkgo 包 `Client.Clob *clob.Facade`。
 type Facade struct {
-	low    *Client
-	signer signer.Signer
+	low     *Client
+	signer  signer.Signer
+	logger  obs.Logger
+	metrics obs.Metrics
 }
 
 // FacadeOption 是 Facade 构造选项。
@@ -49,7 +52,7 @@ func NewFacade(server string, httpDoer HttpRequestDoer, opts ...FacadeOption) (*
 	if err != nil {
 		return nil, fmt.Errorf("clob: new client: %w", err)
 	}
-	f := &Facade{low: low}
+	f := &Facade{low: low, logger: obs.NopLogger{}, metrics: obs.NopMetrics{}}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(f)
@@ -178,7 +181,9 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 		OrderType: &otype,
 	}
 
+	op := f.observe("PlaceOrder", "POST", "/order")
 	resp, err := f.low.PostOrder(ctx, body, withClientOrderHeader(req.ClientOrder))
+	op.done(resp, err)
 	if err != nil {
 		return "", wrapTransportError(ctx, err)
 	}
@@ -205,7 +210,9 @@ func (f *Facade) CancelOrder(ctx context.Context, id OrderID) error {
 		return fmt.Errorf("%w: empty order id", ErrPrecondition)
 	}
 	body := CancelOrderJSONRequestBody{OrderID: string(id)}
+	op := f.observe("CancelOrder", "DELETE", "/order")
 	resp, err := f.low.CancelOrder(ctx, body)
+	op.done(resp, err)
 	if err != nil {
 		return wrapTransportError(ctx, err)
 	}
@@ -223,7 +230,9 @@ func (f *Facade) GetOrder(ctx context.Context, id OrderID) (*SdkOrder, error) {
 	if id == "" {
 		return nil, fmt.Errorf("%w: empty order id", ErrPrecondition)
 	}
+	op := f.observe("GetOrder", "GET", "/order/{id}")
 	resp, err := f.low.GetOrder(ctx, string(id))
+	op.done(resp, err)
 	if err != nil {
 		return nil, wrapTransportError(ctx, err)
 	}
@@ -259,7 +268,9 @@ func (f *Facade) ListOrders(ctx context.Context, filter OrderFilter) ([]SdkOrder
 		params.NextCursor = strPtr(filter.NextCursor)
 	}
 
+	op := f.observe("ListOrders", "GET", "/orders")
 	resp, err := f.low.GetOrders(ctx, params)
+	op.done(resp, err)
 	if err != nil {
 		return nil, "", wrapTransportError(ctx, err)
 	}
@@ -294,7 +305,9 @@ func (f *Facade) GetBook(ctx context.Context, tokenID string) (*Book, error) {
 		return nil, fmt.Errorf("%w: empty token id", ErrPrecondition)
 	}
 	params := &GetBookParams{TokenId: tokenID}
+	op := f.observe("GetBook", "GET", "/book")
 	resp, err := f.low.GetBook(ctx, params)
+	op.done(resp, err)
 	if err != nil {
 		return nil, wrapTransportError(ctx, err)
 	}
@@ -341,7 +354,9 @@ func (f *Facade) GetTrades(ctx context.Context, filter TradeFilter) ([]SdkTrade,
 		params.NextCursor = strPtr(filter.NextCursor)
 	}
 
+	op := f.observe("GetTrades", "GET", "/trades")
 	resp, err := f.low.GetTrades(ctx, params)
+	op.done(resp, err)
 	if err != nil {
 		return nil, "", wrapTransportError(ctx, err)
 	}

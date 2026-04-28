@@ -14,6 +14,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/chainupcloud/pm-sdk-go/pkg/clob"
+	"github.com/chainupcloud/pm-sdk-go/pkg/obs"
 )
 
 // Facade 是 ws 业务门面（契约 §6）。
@@ -43,6 +44,10 @@ type Facade struct {
 
 	// userAuth 是用户频道凭证；nil 时 SubscribeOrders 返回 ErrSign。
 	userAuth *UserAuth
+
+	// logger / metrics 由 WithLogger / WithMetrics 注入；默认 Nop 实现。
+	logger  obs.Logger
+	metrics obs.Metrics
 }
 
 // FacadeOption 是 Facade 构造选项。
@@ -99,6 +104,8 @@ func NewFacade(wsURL string, opts ...FacadeOption) (*Facade, error) {
 		maxBackoff:   30 * time.Second,
 		nowFn:        time.Now,
 		jitterFn:     defaultJitter,
+		logger:       obs.NopLogger{},
+		metrics:      obs.NopMetrics{},
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -180,13 +187,22 @@ func (f *Facade) runBookLoop(ctx context.Context, url string, tokenIDs []string,
 			if !f.sleepBackoff(ctx, disconnect-1) {
 				return
 			}
+			f.metrics.IncCounter(obs.MetricWSReconnectsTotal, map[string]string{"channel": "market"})
+			f.logger.Infow("ws reconnecting", "channel", "market", "attempt", disconnect)
 		}
 
 		conn, err := f.connect(ctx, url)
 		if err != nil {
+			f.logger.Warnw("ws connect failed",
+				"channel", "market",
+				"url", url,
+				"attempt", disconnect,
+				"error", err.Error(),
+			)
 			disconnect++
 			continue
 		}
+		f.logger.Infow("ws connected", "channel", "market", "url", url)
 
 		// 重连成功（首次连接 attempt==0 时不发 RESET）
 		if attempt > 0 {
@@ -215,6 +231,7 @@ func (f *Facade) runBookLoop(ctx context.Context, url string, tokenIDs []string,
 		f.readBookFrames(ctx, conn, g, out)
 
 		_ = conn.Close(websocket.StatusNormalClosure, "loop end")
+		f.logger.Infow("ws disconnected", "channel", "market")
 		if ctx.Err() != nil {
 			return
 		}
@@ -243,6 +260,12 @@ func (f *Facade) readBookFrames(ctx context.Context, conn *websocket.Conn, g *se
 			// nonce guard
 			if !g.accept(up.Sequence, frameHash(up)) {
 				// timestamp 倒退或 hash 重复 → 推 RESET 让上层重建
+				f.metrics.IncCounter(obs.MetricWSSeqJumpsTotal, map[string]string{"channel": "market"})
+				f.logger.Warnw("ws sequence jump",
+					"channel", "market",
+					"token_id", up.TokenID,
+					"sequence", up.Sequence,
+				)
 				select {
 				case out <- BookUpdate{Type: UpdateReset, Time: f.nowFn()}:
 					g.reset()
@@ -275,13 +298,22 @@ func (f *Facade) runOrderLoop(ctx context.Context, url string, markets []string,
 			if !f.sleepBackoff(ctx, disconnect-1) {
 				return
 			}
+			f.metrics.IncCounter(obs.MetricWSReconnectsTotal, map[string]string{"channel": "user"})
+			f.logger.Infow("ws reconnecting", "channel", "user", "attempt", disconnect)
 		}
 
 		conn, err := f.connect(ctx, url)
 		if err != nil {
+			f.logger.Warnw("ws connect failed",
+				"channel", "user",
+				"url", url,
+				"attempt", disconnect,
+				"error", err.Error(),
+			)
 			disconnect++
 			continue
 		}
+		f.logger.Infow("ws connected", "channel", "user", "url", url)
 
 		sub := wireUserSubscribe{
 			Auth: wireUserAuth{
@@ -301,6 +333,7 @@ func (f *Facade) runOrderLoop(ctx context.Context, url string, markets []string,
 		f.readOrderFrames(ctx, conn, out)
 
 		_ = conn.Close(websocket.StatusNormalClosure, "loop end")
+		f.logger.Infow("ws disconnected", "channel", "user")
 		if ctx.Err() != nil {
 			return
 		}
