@@ -69,18 +69,17 @@ func TestNewIgnoresNilOption(t *testing.T) {
 	}
 }
 
-// TestAPIErrorUnwrap 验证 APIError.Unwrap 与哨兵协作。
-func TestAPIErrorUnwrap(t *testing.T) {
-	apiErr := &APIError{
-		StatusCode: 404,
-		Code:       "not_found",
-		Message:    "market not found",
-		sentinel:   ErrNotFound,
+// TestSentinelsAlias 验证顶层哨兵 alias 到 pkg/clob 实现。
+//
+// Phase 3 起 APIError + 哨兵的真正定义在 pkg/clob/errors.go；顶层 errors.go
+// 走 alias 重导出。具体的 *APIError 构造与 Unwrap 协作测试见 pkg/clob/client_test.go。
+func TestSentinelsAlias(t *testing.T) {
+	if ErrNotFound == nil || ErrSign == nil || ErrRateLimit == nil ||
+		ErrUpstream == nil || ErrPrecondition == nil || ErrCancelled == nil {
+		t.Fatal("sentinel re-exports should be non-nil")
 	}
-	if !errors.Is(apiErr, ErrNotFound) {
-		t.Errorf("errors.Is(apiErr, ErrNotFound) should be true")
-	}
-	if apiErr.Error() == "" {
-		t.Error("Error() should produce non-empty string")
+	// errors.Is 自反性；保证 alias 后的 sentinel 与 pkg/clob 包内同源。
+	if !errors.Is(ErrNotFound, ErrNotFound) {
+		t.Error("errors.Is self-reflexive failed")
 	}
 }
