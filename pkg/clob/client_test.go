@@ -1,0 +1,522 @@
+package clob
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/shopspring/decimal"
+)
+
+// ---------- mock signer ----------
+
+type mockSigner struct {
+	addr string
+	sig  []byte
+	err  error
+}
+
+func (m *mockSigner) Sign(_ context.Context, _ []byte) ([]byte, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.sig == nil {
+		return []byte{0xde, 0xad, 0xbe, 0xef}, nil
+	}
+	return m.sig, nil
+}
+func (m *mockSigner) Address() string {
+	if m.addr == "" {
+		return "0x1234567890abcdef1234567890abcdef12345678"
+	}
+	return m.addr
+}
+func (m *mockSigner) SchemaVersion() string { return "test-v1" }
+
+// ---------- helpers ----------
+
+func newTestServer(t *testing.T, h http.HandlerFunc) (*httptest.Server, *Facade) {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	f, err := NewFacade(srv.URL, srv.Client(), WithSigner(&mockSigner{}))
+	if err != nil {
+		t.Fatalf("NewFacade: %v", err)
+	}
+	return srv, f
+}
+
+// ---------- happy path ----------
+
+func TestPlaceOrder_Happy(t *testing.T) {
+	var receivedBody SendOrder
+	var receivedClientOrder string
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/order" {
+			t.Errorf("path = %q, want /order", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q", r.Method)
+		}
+		receivedClientOrder = r.Header.Get("X-Client-Order-Id")
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &receivedBody); err != nil {
+			t.Fatalf("decode SendOrder: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"success":true,"orderID":"12345","status":"live"}`))
+	})
+
+	id, err := f.PlaceOrder(context.Background(), OrderReq{
+		MarketID:    "0xmarket",
+		TokenID:     "100200300",
+		Side:        SideBuy,
+		OrderType:   OrderTypeLimit,
+		Price:       decimal.RequireFromString("0.55"),
+		Size:        decimal.RequireFromString("10"),
+		ClientOrder: "client-001",
+	})
+	if err != nil {
+		t.Fatalf("PlaceOrder: %v", err)
+	}
+	if id != "12345" {
+		t.Errorf("OrderID = %q, want 12345", id)
+	}
+	if receivedClientOrder != "client-001" {
+		t.Errorf("X-Client-Order-Id = %q", receivedClientOrder)
+	}
+	if receivedBody.Order.Side != BUY {
+		t.Errorf("upstream Side = %q, want BUY", receivedBody.Order.Side)
+	}
+	if receivedBody.OrderType == nil || *receivedBody.OrderType != GTC {
+		t.Errorf("upstream OrderType = %v, want GTC", receivedBody.OrderType)
+	}
+	if receivedBody.Order.Signature == "" {
+		t.Error("Signature should be populated by mock signer")
+	}
+}
+
+func TestPlaceOrder_NoSigner(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(500) // 不应被调用
+	}))
+	defer srv.Close()
+	f, err := NewFacade(srv.URL, srv.Client()) // 故意不注入 signer
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.PlaceOrder(context.Background(), OrderReq{
+		MarketID: "m", TokenID: "t", Side: SideBuy, OrderType: OrderTypeLimit,
+		Price: decimal.NewFromInt(1), Size: decimal.NewFromInt(1),
+	})
+	if !errors.Is(err, ErrSign) {
+		t.Errorf("err = %v, want ErrSign", err)
+	}
+}
+
+func TestPlaceOrder_BadAmounts(t *testing.T) {
+	_, f := newTestServer(t, func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("server should not be called for bad amounts")
+	})
+	_, err := f.PlaceOrder(context.Background(), OrderReq{
+		MarketID: "m", TokenID: "t", Side: SideBuy, OrderType: OrderTypeLimit,
+		Price: decimal.Zero, Size: decimal.NewFromInt(1),
+	})
+	if !errors.Is(err, ErrPrecondition) {
+		t.Errorf("err = %v, want ErrPrecondition", err)
+	}
+}
+
+func TestGetOrder_Happy(t *testing.T) {
+	createdAt := 1700000000
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/order/") {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		idStr := "0xabc"
+		market := "0xmarket"
+		asset := "100200300"
+		price := "0.55"
+		size := "10"
+		matched := "3"
+		side := BUY
+		otype := GTC
+		status := ORDERSTATUSLIVE
+		oo := OpenOrder{
+			Id:           &idStr,
+			Market:       &market,
+			AssetId:      &asset,
+			Price:        &price,
+			OriginalSize: &size,
+			SizeMatched:  &matched,
+			Side:         &side,
+			OrderType:    &otype,
+			Status:       &status,
+			CreatedAt:    &createdAt,
+		}
+		b, _ := json.Marshal(oo)
+		_, _ = w.Write(b)
+	})
+	o, err := f.GetOrder(context.Background(), "0xabc")
+	if err != nil {
+		t.Fatalf("GetOrder: %v", err)
+	}
+	if o.ID != "0xabc" {
+		t.Errorf("ID = %q", o.ID)
+	}
+	if o.Side != SideBuy {
+		t.Errorf("Side = %q", o.Side)
+	}
+	if o.OrderType != OrderTypeLimit {
+		t.Errorf("OrderType = %q", o.OrderType)
+	}
+	if o.Status != OrderStatusPartiallyFilled {
+		t.Errorf("Status = %q, want PARTIALLY_FILLED (matched > 0)", o.Status)
+	}
+	if !o.Price.Equal(decimal.RequireFromString("0.55")) {
+		t.Errorf("Price = %s", o.Price)
+	}
+	if !o.Filled.Equal(decimal.NewFromInt(3)) {
+		t.Errorf("Filled = %s", o.Filled)
+	}
+}
+
+func TestGetBook_Happy(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/book" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.URL.Query().Get("token_id") != "100200300" {
+			t.Errorf("token_id = %q", r.URL.Query().Get("token_id"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"asset_id":"100200300",
+			"timestamp":1700000000,
+			"bids":[{"price":"0.54","size":"100"},{"price":"0.53","size":"200"}],
+			"asks":[{"price":"0.56","size":"50"}]
+		}`))
+	})
+	b, err := f.GetBook(context.Background(), "100200300")
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if len(b.Bids) != 2 || len(b.Asks) != 1 {
+		t.Fatalf("levels = bids:%d asks:%d", len(b.Bids), len(b.Asks))
+	}
+	if !b.Bids[0].Price.Equal(decimal.RequireFromString("0.54")) {
+		t.Errorf("bid[0].Price = %s", b.Bids[0].Price)
+	}
+	if !b.Asks[0].Size.Equal(decimal.NewFromInt(50)) {
+		t.Errorf("ask[0].Size = %s", b.Asks[0].Size)
+	}
+}
+
+func TestListOrders_Happy(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("market") != "0xmarket" {
+			t.Errorf("market filter = %q", r.URL.Query().Get("market"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data":[{"id":"o1","market":"0xmarket","asset_id":"t1","price":"0.5","original_size":"10","size_matched":"0","status":"ORDER_STATUS_LIVE","side":"BUY","order_type":"GTC"}],
+			"next_cursor":"LTE="
+		}`))
+	})
+	orders, cursor, err := f.ListOrders(context.Background(), OrderFilter{MarketID: "0xmarket"})
+	if err != nil {
+		t.Fatalf("ListOrders: %v", err)
+	}
+	if len(orders) != 1 {
+		t.Fatalf("len(orders) = %d", len(orders))
+	}
+	if cursor != "LTE=" {
+		t.Errorf("cursor = %q", cursor)
+	}
+	if orders[0].Status != OrderStatusOpen {
+		t.Errorf("Status = %q", orders[0].Status)
+	}
+}
+
+func TestGetTrades_Happy(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("maker_address") != "0xabc" {
+			t.Errorf("maker_address = %q", r.URL.Query().Get("maker_address"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data":[{"id":"t1","market":"0xm","asset_id":"tok","price":"0.5","size":"3","side":"SELL","status":"TRADE_STATUS_MATCHED","trader_side":"TAKER","taker_order_id":"o1","match_time":"2026-04-27T10:00:00Z"}],
+			"next_cursor":""
+		}`))
+	})
+	trades, _, err := f.GetTrades(context.Background(), TradeFilter{MakerAddress: "0xabc"})
+	if err != nil {
+		t.Fatalf("GetTrades: %v", err)
+	}
+	if len(trades) != 1 {
+		t.Fatalf("len(trades) = %d", len(trades))
+	}
+	if trades[0].Side != SideSell {
+		t.Errorf("Side = %q", trades[0].Side)
+	}
+	if trades[0].OrderID != "o1" {
+		t.Errorf("OrderID = %q", trades[0].OrderID)
+	}
+}
+
+func TestGetTrades_MissingMaker(t *testing.T) {
+	_, f := newTestServer(t, func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("server should not be called")
+	})
+	_, _, err := f.GetTrades(context.Background(), TradeFilter{})
+	if !errors.Is(err, ErrPrecondition) {
+		t.Errorf("err = %v, want ErrPrecondition", err)
+	}
+}
+
+func TestCancelOrder_Happy(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/order" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.Method != http.MethodDelete {
+			t.Errorf("method = %q", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), `"orderID":"order-1"`) {
+			t.Errorf("body = %s", body)
+		}
+		_, _ = w.Write([]byte(`{"canceled":["order-1"]}`))
+	})
+	if err := f.CancelOrder(context.Background(), "order-1"); err != nil {
+		t.Fatalf("CancelOrder: %v", err)
+	}
+}
+
+func TestCancelOrder_EmptyID(t *testing.T) {
+	_, f := newTestServer(t, func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("server should not be called")
+	})
+	err := f.CancelOrder(context.Background(), "")
+	if !errors.Is(err, ErrPrecondition) {
+		t.Errorf("err = %v, want ErrPrecondition", err)
+	}
+}
+
+// ---------- error mapping ----------
+
+func TestErrorMapping(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		want   error
+	}{
+		{"401_to_ErrSign", http.StatusUnauthorized, ErrSign},
+		{"403_to_ErrSign", http.StatusForbidden, ErrSign},
+		{"404_to_ErrNotFound", http.StatusNotFound, ErrNotFound},
+		{"412_to_ErrPrecondition", http.StatusPreconditionFailed, ErrPrecondition},
+		{"422_to_ErrPrecondition", http.StatusUnprocessableEntity, ErrPrecondition},
+		{"429_to_ErrRateLimit", http.StatusTooManyRequests, ErrRateLimit},
+		{"502_to_ErrUpstream", http.StatusBadGateway, ErrUpstream},
+		{"500_to_ErrUpstream", http.StatusInternalServerError, ErrUpstream},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, f := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("X-Request-Id", "req-xyz")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"error":"upstream said no"}`))
+			})
+			_, err := f.GetBook(context.Background(), "100")
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v (%T), want errors.Is %v", err, err, tc.want)
+			}
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("errors.As(*APIError) failed")
+			}
+			if apiErr.StatusCode != tc.status {
+				t.Errorf("StatusCode = %d", apiErr.StatusCode)
+			}
+			if apiErr.Message != "upstream said no" {
+				t.Errorf("Message = %q", apiErr.Message)
+			}
+			if apiErr.RequestID != "req-xyz" {
+				t.Errorf("RequestID = %q", apiErr.RequestID)
+			}
+			if apiErr.Error() == "" {
+				t.Error("Error() empty")
+			}
+		})
+	}
+}
+
+func TestErrorMapping_NoBody(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	_, err := f.GetBook(context.Background(), "100")
+	if !errors.Is(err, ErrUpstream) {
+		t.Fatalf("err = %v", err)
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatal("not APIError")
+	}
+	if apiErr.Message == "" {
+		t.Error("fallback message should be http.StatusText")
+	}
+}
+
+// ---------- ctx cancel / timeout ----------
+
+func TestCtxCancel(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// 模拟慢响应
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+		w.WriteHeader(200)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+	_, err := f.GetBook(ctx, "100")
+	if !errors.Is(err, ErrCancelled) {
+		t.Errorf("err = %v, want ErrCancelled", err)
+	}
+}
+
+func TestCtxTimeout(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+		w.WriteHeader(200)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := f.GetBook(ctx, "100")
+	if !errors.Is(err, ErrCancelled) {
+		t.Errorf("err = %v, want ErrCancelled", err)
+	}
+}
+
+// ---------- enum mapping unit tests ----------
+
+func TestSideMapping(t *testing.T) {
+	if mapSide(SideBuy) != BUY || mapSide(SideSell) != SELL {
+		t.Error("forward mapping wrong")
+	}
+	bs := BUY
+	ss := SELL
+	if mapSideReverse(&bs) != SideBuy || mapSideReverse(&ss) != SideSell {
+		t.Error("reverse mapping wrong")
+	}
+	if mapSideReverse(nil) != "" {
+		t.Error("nil reverse should be empty")
+	}
+}
+
+func TestOrderTypeMapping(t *testing.T) {
+	if mapOrderType(OrderTypeLimit) != GTC || mapOrderType(OrderTypeMarket) != FAK {
+		t.Error("forward mapping wrong")
+	}
+	gtc := GTC
+	fak := FAK
+	if mapOrderTypeReverse(&gtc) != OrderTypeLimit || mapOrderTypeReverse(&fak) != OrderTypeMarket {
+		t.Error("reverse mapping wrong")
+	}
+}
+
+func TestOrderStatusMapping(t *testing.T) {
+	live := ORDERSTATUSLIVE
+	matched := ORDERSTATUSMATCHED
+	cancelled := ORDERSTATUSCANCELED
+	invalid := ORDERSTATUSINVALID
+	if mapOrderStatusReverse(&live) != OrderStatusOpen {
+		t.Error("LIVE → OPEN failed")
+	}
+	if mapOrderStatusReverse(&matched) != OrderStatusFilled {
+		t.Error("MATCHED → FILLED failed")
+	}
+	if mapOrderStatusReverse(&cancelled) != OrderStatusCancelled {
+		t.Error("CANCELED → CANCELLED failed")
+	}
+	if mapOrderStatusReverse(&invalid) != OrderStatusRejected {
+		t.Error("INVALID → REJECTED failed")
+	}
+	if mapOrderStatusReverse(nil) != "" {
+		t.Error("nil reverse not empty")
+	}
+}
+
+func TestAPIError_NilSafety(t *testing.T) {
+	var nilErr *APIError
+	if nilErr.Error() != "" {
+		t.Error("nil APIError.Error() should be empty")
+	}
+	if nilErr.Unwrap() != nil {
+		t.Error("nil APIError.Unwrap() should be nil")
+	}
+
+	withCode := &APIError{StatusCode: 400, Code: "bad_request", Message: "x"}
+	if withCode.Error() == "" {
+		t.Error("Error() with code should be non-empty")
+	}
+}
+
+func TestWrapHTTPError_NilResp(t *testing.T) {
+	err := wrapHTTPError(nil, nil)
+	if !errors.Is(err, ErrUpstream) {
+		t.Errorf("nil resp should map to ErrUpstream, got %v", err)
+	}
+}
+
+func TestWrapHTTPError_LargeBody(t *testing.T) {
+	resp := &http.Response{StatusCode: 500, Header: http.Header{}}
+	big := make([]byte, maxStoredBody*2)
+	for i := range big {
+		big[i] = 'A'
+	}
+	err := wrapHTTPError(resp, big)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatal("not APIError")
+	}
+	if len(apiErr.Body) != maxStoredBody {
+		t.Errorf("Body trimmed = %d, want %d", len(apiErr.Body), maxStoredBody)
+	}
+}
+
+func TestExpirationPropagated(t *testing.T) {
+	exp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var captured SendOrder
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		_, _ = w.Write([]byte(`{"orderID":"o1"}`))
+	})
+	_, err := f.PlaceOrder(context.Background(), OrderReq{
+		MarketID: "m", TokenID: "t",
+		Side: SideSell, OrderType: OrderTypeLimit,
+		Price: decimal.NewFromInt(1), Size: decimal.NewFromInt(1),
+		Expiration: &exp,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captured.Order.Expiration == nil ||
+		*captured.Order.Expiration != "1767225600" {
+		t.Errorf("Expiration upstream = %v", captured.Order.Expiration)
+	}
+}

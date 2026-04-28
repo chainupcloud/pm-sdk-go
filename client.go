@@ -12,10 +12,12 @@ import (
 
 // Client 是 pm-sdk-go 的顶层门面，聚合各业务子包客户端。
 //
-// Phase 2：Clob/Gamma 直接持有 oapi-codegen 生成的低层 *clob.Client / *gamma.Client；
-// WS 仍是 Phase 1 占位。Phase 3+ 会引入手写门面替换字段类型。
+// Phase 3：Clob 字段类型已从 generated *clob.Client 切换到手写门面 *clob.Facade
+// （PlaceOrder / CancelOrder / GetOrder / ListOrders / GetBook / GetTrades）。
+// Gamma 仍是 generated *gamma.Client，将在 Phase 4 替换为 gamma 手写门面；
+// WS 仍是 Phase 1 占位，Phase 5 替换。
 type Client struct {
-	Clob  *clob.Client
+	Clob  *clob.Facade
 	Gamma *gamma.Client
 	WS    *ws.Client
 
@@ -48,8 +50,8 @@ func defaults() *config {
 
 // New 构造一个 Client。
 //
-// Phase 2 仅做配置组装并实例化 oapi-codegen 生成的低层 *clob.Client / *gamma.Client；
-// 业务方法（PlaceOrder / GetEvent 等）在 Phase 3+ 落地。
+// Phase 3：Clob 走手写门面 *clob.Facade；可选 signer 透传给 Facade，无 signer
+// 时 PlaceOrder 返回 ErrSign。Gamma 仍走 generated 低层 client（Phase 4 替换）。
 func New(opts ...Option) (*Client, error) {
 	cfg := defaults()
 	for _, opt := range opts {
@@ -59,7 +61,11 @@ func New(opts ...Option) (*Client, error) {
 		opt(cfg)
 	}
 
-	clobCli, err := clob.NewClient(cfg.clobURL)
+	clobOpts := []clob.FacadeOption{}
+	if cfg.signer != nil {
+		clobOpts = append(clobOpts, clob.WithSigner(cfg.signer))
+	}
+	clobFacade, err := clob.NewFacade(cfg.clobURL, cfg.httpClient, clobOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +75,7 @@ func New(opts ...Option) (*Client, error) {
 	}
 
 	return &Client{
-		Clob:  clobCli,
+		Clob:  clobFacade,
 		Gamma: gammaCli,
 		WS:    ws.NewStub(),
 		cfg:   cfg,
