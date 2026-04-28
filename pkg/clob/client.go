@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/shopspring/decimal"
 
 	"github.com/chainupcloud/pm-sdk-go/pkg/signer"
@@ -56,14 +58,28 @@ func NewFacade(server string, httpDoer HttpRequestDoer, opts ...FacadeOption) (*
 	return f, nil
 }
 
+// orderSigner 是 Facade 内部检测的可选高级接口。当 signer 同时实现 SignOrder
+// （即注入了 *signer.PMCup26Signer）时，PlaceOrder 走完整 EIP-712 13-field
+// Order 域签名路径；否则降级走 Phase 3 stub（payload = "marketID|tokenID|side|price|size|clientOrder"）
+// 以保持 mock signer 单测向后兼容。
+type orderSigner interface {
+	SignOrder(ctx context.Context, order *signer.OrderForSigning) ([]byte, error)
+	ScopeID() [32]byte
+}
+
 // PlaceOrder 下单（契约 §4）。
 //
 // 流程：
 //  1. signer 必填；缺失返回 %w ErrSign
-//  2. 构造 generated SendOrder（EIP-712 字段尚由 Phase 6 完整签名；Phase 3
-//     仅 stub 签名/字段，确保 wire 形态对齐）
-//  3. 调用 generated PostOrder
+//  2. 构造 OrderForSigning（含 maker/signer/taker/scopeId/...）；
+//     若 signer 实现 orderSigner（PMCup26Signer），调 SignOrder 拿 EIP-712
+//     13-field 签名；否则降级 stub 签名（Phase 3 行为，保 mock signer 兼容）
+//  3. 把签名 + 字段填入 generated.Order；调用 PostOrder
 //  4. 非 2xx → wrapHTTPError；2xx → 解析 SendOrderResponse.OrderID
+//
+// 注意：Phase 6 仅替换签名 wiring，不改 OpenAPI 上 Order.Salt / Nonce / FeeRateBps
+// 等字段缺省值；后端 verify 端在 OrderForVerification 里对应的零值由 SDK 显式填入
+// 确保 hash 一致。后续 Phase 7 接入 contract test 时会按真实 staging 校验。
 func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) {
 	if f.signer == nil {
 		return "", fmt.Errorf("%w: PlaceOrder requires signer (use clob.WithSigner)", ErrSign)
@@ -74,33 +90,88 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 		return "", err
 	}
 
-	// Phase 3 stub：实际 EIP-712 hash 由 Phase 6 在 signer 内部完成；
-	// 这里直接把 ClientOrder + payload 简单串作为 sig 输入，签名结果填入 Order.Signature。
-	payload := []byte(req.MarketID + "|" + req.TokenID + "|" + string(req.Side) + "|" +
-		req.Price.String() + "|" + req.Size.String() + "|" + req.ClientOrder)
-	sig, err := f.signer.Sign(ctx, payload)
-	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrSign, err)
-	}
-
 	side := mapSide(req.Side)
 	otype := mapOrderType(req.OrderType)
 
 	expiration := "0"
+	expirationUnix := uint64(0)
 	if req.Expiration != nil {
-		expiration = strconv.FormatInt(req.Expiration.Unix(), 10)
+		expirationUnix = uint64(req.Expiration.Unix())
+		expiration = strconv.FormatUint(expirationUnix, 10)
+	}
+
+	signerAddr := f.signer.Address()
+	makerAmountBig, _ := new(big.Int).SetString(makerAmount, 10)
+	takerAmountBig, _ := new(big.Int).SetString(takerAmount, 10)
+	tokenIDBig, _ := new(big.Int).SetString(req.TokenID, 10)
+	if tokenIDBig == nil {
+		tokenIDBig = new(big.Int)
+	}
+	if makerAmountBig == nil {
+		makerAmountBig = new(big.Int)
+	}
+	if takerAmountBig == nil {
+		takerAmountBig = new(big.Int)
+	}
+
+	var sig []byte
+	scopeIDHex := ""
+	signatureType := N0 // generated enum: 0=EOA
+	saltStr := "0"
+	nonceStr := "0"
+	feeRateBpsStr := "0"
+
+	if os, ok := f.signer.(orderSigner); ok {
+		// 完整 EIP-712 路径
+		scope := os.ScopeID()
+		scopeIDHex = signer.ScopeIDToHex(scope)
+
+		order := &signer.OrderForSigning{
+			Salt:          big.NewInt(0),
+			Maker:         common.HexToAddress(signerAddr),
+			Signer:        common.HexToAddress(signerAddr),
+			Taker:         common.Address{},
+			TokenID:       tokenIDBig,
+			MakerAmount:   makerAmountBig,
+			TakerAmount:   takerAmountBig,
+			Expiration:    expirationUnix,
+			Nonce:         0,
+			FeeRateBps:    0,
+			Side:          mapSdkSideToOrderSide(req.Side),
+			SignatureType: signer.SignatureTypeEOA,
+			ScopeID:       scope,
+		}
+		sig, err = os.SignOrder(ctx, order)
+		if err != nil {
+			return "", fmt.Errorf("%w: %v", ErrSign, err)
+		}
+	} else {
+		// 兼容 stub 路径（Phase 3 / mock signer 单测）
+		payload := []byte(req.MarketID + "|" + req.TokenID + "|" + string(req.Side) + "|" +
+			req.Price.String() + "|" + req.Size.String() + "|" + req.ClientOrder)
+		sig, err = f.signer.Sign(ctx, payload)
+		if err != nil {
+			return "", fmt.Errorf("%w: %v", ErrSign, err)
+		}
 	}
 
 	order := Order{
-		Maker:       f.signer.Address(),
-		MakerAmount: makerAmount,
-		TakerAmount: takerAmount,
-		Side:        side,
-		Signature:   "0x" + bytesToHex(sig),
-		Signer:      f.signer.Address(),
-		Taker:       "0x0000000000000000000000000000000000000000",
-		TokenID:     req.TokenID,
-		Expiration:  &expiration,
+		Maker:         signerAddr,
+		MakerAmount:   makerAmount,
+		TakerAmount:   takerAmount,
+		Side:          side,
+		Signature:     "0x" + bytesToHex(sig),
+		Signer:        signerAddr,
+		Taker:         "0x0000000000000000000000000000000000000000",
+		TokenID:       req.TokenID,
+		Expiration:    &expiration,
+		Salt:          &saltStr,
+		Nonce:         &nonceStr,
+		FeeRateBps:    &feeRateBpsStr,
+		SignatureType: &signatureType,
+	}
+	if scopeIDHex != "" {
+		order.ScopeId = &scopeIDHex
 	}
 	body := SendOrder{
 		Order:     order,
@@ -321,6 +392,14 @@ func computeAmounts(req OrderReq) (string, string, error) {
 	default:
 		return "", "", fmt.Errorf("%w: invalid side %q", ErrPrecondition, req.Side)
 	}
+}
+
+// mapSdkSideToOrderSide 把 SDK 侧 BUY/SELL 字符串映射到 signer.OrderSide 枚举（0/1）。
+func mapSdkSideToOrderSide(s SdkSide) signer.OrderSide {
+	if s == SideSell {
+		return signer.OrderSideSell
+	}
+	return signer.OrderSideBuy
 }
 
 func mapSide(s SdkSide) Side {

@@ -4,14 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/shopspring/decimal"
+
+	pmsigner "github.com/chainupcloud/pm-sdk-go/pkg/signer"
 )
 
 // ---------- mock signer ----------
@@ -496,6 +502,133 @@ func TestWrapHTTPError_LargeBody(t *testing.T) {
 	if len(apiErr.Body) != maxStoredBody {
 		t.Errorf("Body trimmed = %d, want %d", len(apiErr.Body), maxStoredBody)
 	}
+}
+
+// TestPlaceOrder_PMCup26Signer 验证 Phase 6 的 EIP-712 签名 wiring：当 Facade 注入
+// *PMCup26Signer 时，PlaceOrder 会走 SignOrder 完整路径（13-field EIP-712）并把
+// scopeId / signatureType 等字段正确填入 generated.Order；signature 应能被 ecrecover
+// 反推出 signer 地址。
+func TestPlaceOrder_PMCup26Signer(t *testing.T) {
+	priv, _ := ethcrypto.GenerateKey()
+	signerAddr := ethcrypto.PubkeyToAddress(priv.PublicKey)
+
+	exchange := common.HexToAddress("0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E")
+	scope := pmsigner.ScopeIDFromHex("0x0000000000000000000000000000000000000000000000000000000000000042")
+	chainID := int64(137)
+
+	pms := pmsigner.NewPMCup26Signer(priv, scope, chainID, pmsigner.WithExchangeAddress(exchange))
+
+	var captured SendOrder
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"orderID":"o-eip712-1"}`))
+	}))
+	defer srv.Close()
+
+	f, err := NewFacade(srv.URL, srv.Client(), WithSigner(pms))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := f.PlaceOrder(context.Background(), OrderReq{
+		MarketID:    "0xmarket",
+		TokenID:     "100200300",
+		Side:        SideBuy,
+		OrderType:   OrderTypeLimit,
+		Price:       decimal.RequireFromString("0.55"),
+		Size:        decimal.RequireFromString("10"),
+		ClientOrder: "client-eip712",
+	})
+	if err != nil {
+		t.Fatalf("PlaceOrder: %v", err)
+	}
+	if id != "o-eip712-1" {
+		t.Errorf("OrderID = %q", id)
+	}
+
+	// scopeId hex 必须出现在 wire 上
+	if captured.Order.ScopeId == nil || *captured.Order.ScopeId != "0x0000000000000000000000000000000000000000000000000000000000000042" {
+		t.Errorf("ScopeId = %v", captured.Order.ScopeId)
+	}
+	if captured.Order.SignatureType == nil || *captured.Order.SignatureType != N0 {
+		t.Errorf("SignatureType = %v", captured.Order.SignatureType)
+	}
+	if captured.Order.Maker != signerAddr.Hex() {
+		t.Errorf("Maker = %s, want %s", captured.Order.Maker, signerAddr.Hex())
+	}
+
+	// 反向验证签名：用相同 OrderForSigning 算 digest，ecrecover 应等于 signer 地址
+	tokenIDBig := new(big.Int).SetUint64(100200300)
+	makerAmount := decimal.RequireFromString("0.55").Mul(decimal.RequireFromString("10")).String()
+	takerAmount := decimal.RequireFromString("10").String()
+	mAmt, _ := new(big.Int).SetString(makerAmount, 10)
+	tAmt, _ := new(big.Int).SetString(takerAmount, 10)
+
+	order := &pmsigner.OrderForSigning{
+		Salt:          big.NewInt(0),
+		Maker:         signerAddr,
+		Signer:        signerAddr,
+		Taker:         common.Address{},
+		TokenID:       tokenIDBig,
+		MakerAmount:   mAmt,
+		TakerAmount:   tAmt,
+		Expiration:    0,
+		Nonce:         0,
+		FeeRateBps:    0,
+		Side:          pmsigner.OrderSideBuy,
+		SignatureType: pmsigner.SignatureTypeEOA,
+		ScopeID:       scope,
+	}
+	digest := pmsigner.BuildOrderDigest(order, exchange, chainID)
+	sigHex := captured.Order.Signature
+	if len(sigHex) < 4 || sigHex[:2] != "0x" {
+		t.Fatalf("signature not hex: %q", sigHex)
+	}
+	sigBytes, err := hexDecode(sigHex[2:])
+	if err != nil {
+		t.Fatalf("decode sig: %v", err)
+	}
+	pub, err := ethcrypto.SigToPub(digest[:], sigBytes)
+	if err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+	got := ethcrypto.PubkeyToAddress(*pub)
+	if got != signerAddr {
+		t.Errorf("recovered = %s, want %s", got.Hex(), signerAddr.Hex())
+	}
+}
+
+// hexDecode 是测试本地 hex helper，避免引入额外依赖。
+func hexDecode(s string) ([]byte, error) {
+	out := make([]byte, len(s)/2)
+	for i := 0; i < len(out); i++ {
+		var hi, lo byte
+		var err error
+		hi, err = hexDigit(s[2*i])
+		if err != nil {
+			return nil, err
+		}
+		lo, err = hexDigit(s[2*i+1])
+		if err != nil {
+			return nil, err
+		}
+		out[i] = hi<<4 | lo
+	}
+	return out, nil
+}
+
+func hexDigit(c byte) (byte, error) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', nil
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, nil
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, nil
+	}
+	return 0, fmt.Errorf("bad hex char %q", c)
 }
 
 func TestExpirationPropagated(t *testing.T) {
