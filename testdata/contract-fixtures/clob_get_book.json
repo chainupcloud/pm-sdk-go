@@ -1,0 +1,29 @@
+{
+  "name": "GetBook happy path (placeholder)",
+  "comment": "TODO: replace with real staging recording.",
+  "request": {
+    "method": "GET",
+    "path": "/book",
+    "query": {"token_id": "100200300"},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "market": "0xmarketconditionid",
+      "asset_id": "100200300",
+      "timestamp": 1714150000,
+      "bids": [
+        {"price": "0.54", "size": "100"},
+        {"price": "0.53", "size": "200"}
+      ],
+      "asks": [
+        {"price": "0.56", "size": "150"},
+        {"price": "0.57", "size": "250"}
+      ]
+    }
+  }
+}

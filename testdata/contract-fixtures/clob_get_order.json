@@ -1,0 +1,27 @@
+{
+  "name": "GetOrder happy path (placeholder)",
+  "comment": "TODO: replace with real staging recording.",
+  "request": {
+    "method": "GET",
+    "path": "/order/0xfixtureorderid000000000000000000000000000000000000000000000000",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "id": "0xfixtureorderid000000000000000000000000000000000000000000000000",
+      "market": "0xmarketconditionid",
+      "asset_id": "100200300",
+      "side": "BUY",
+      "order_type": "GTC",
+      "status": "ORDER_STATUS_LIVE",
+      "price": "0.55",
+      "original_size": "10",
+      "size_matched": "0",
+      "created_at": 1714150000
+    }
+  }
+}

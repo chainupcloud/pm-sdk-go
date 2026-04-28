@@ -1,18 +1,14 @@
 package pmsdkgo
 
-// Logger 是 SDK 内部的轻量日志钩子接口。
-// 用户可注入 zap.SugaredLogger / logrus / 自家封装；默认 nop。
-type Logger interface {
-	Debugw(msg string, kvs ...any)
-	Infow(msg string, kvs ...any)
-	Warnw(msg string, kvs ...any)
-	Errorw(msg string, kvs ...any)
-}
+import "github.com/chainupcloud/pm-sdk-go/pkg/obs"
 
-// nopLogger 是默认的丢弃日志实现。
-type nopLogger struct{}
+// Logger 是 SDK 的轻量日志钩子接口（契约 §9）。
+//
+// 真实定义在 pkg/obs.Logger；顶层用 type alias 暴露，让 `pmsdkgo.Logger`
+// 与 `obs.Logger` 完全等价，调用方两处导入皆可。
+type Logger = obs.Logger
 
-func (nopLogger) Debugw(string, ...any) {}
-func (nopLogger) Infow(string, ...any)  {}
-func (nopLogger) Warnw(string, ...any)  {}
-func (nopLogger) Errorw(string, ...any) {}
+// Metrics 是 SDK 的轻量指标钩子接口（契约 §9）。
+//
+// 真实定义在 pkg/obs.Metrics；alias 同 Logger。
+type Metrics = obs.Metrics

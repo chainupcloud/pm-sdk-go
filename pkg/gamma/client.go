@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/chainupcloud/pm-sdk-go/pkg/clob"
+	"github.com/chainupcloud/pm-sdk-go/pkg/obs"
 )
 
 // Facade 是 gamma 业务门面（契约 §5）。
@@ -21,7 +22,9 @@ import (
 // 上游 gamma-service 的 200 响应在 OpenAPI 中无 schema（裸 *http.Response），
 // 所以解析逻辑全部由 facade 手写 json.Unmarshal 完成。
 type Facade struct {
-	low *Client
+	low     *Client
+	logger  obs.Logger
+	metrics obs.Metrics
 }
 
 // FacadeOption 是 Facade 构造选项（预留；当前无 signer / no-auth 等可调）。
@@ -39,7 +42,7 @@ func NewFacade(server string, httpDoer HttpRequestDoer, opts ...FacadeOption) (*
 	if err != nil {
 		return nil, fmt.Errorf("gamma: new client: %w", err)
 	}
-	f := &Facade{low: low}
+	f := &Facade{low: low, logger: obs.NopLogger{}, metrics: obs.NopMetrics{}}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(f)
@@ -56,7 +59,9 @@ func (f *Facade) GetEvent(ctx context.Context, eventID string) (*Event, error) {
 	if eventID == "" {
 		return nil, fmt.Errorf("%w: empty event id", errPrecondition)
 	}
+	op := f.observe("GetEvent", "GET", "/events/{id}")
 	resp, err := f.low.GetEventsId(ctx, eventID)
+	op.done(resp, err)
 	if err != nil {
 		return nil, wrapTransportError(ctx, err)
 	}
@@ -122,7 +127,9 @@ func (f *Facade) ListEvents(ctx context.Context, filter EventFilter) ([]Event, s
 		params.EndDateMax = filter.EndDateMax
 	}
 
+	op := f.observe("ListEvents", "GET", "/events")
 	resp, err := f.low.GetEvents(ctx, params)
+	op.done(resp, err)
 	if err != nil {
 		return nil, "", wrapTransportError(ctx, err)
 	}
@@ -160,7 +167,9 @@ func (f *Facade) GetMarket(ctx context.Context, marketID string) (*Market, error
 	if marketID == "" {
 		return nil, fmt.Errorf("%w: empty market id", errPrecondition)
 	}
+	op := f.observe("GetMarket", "GET", "/markets/{id}")
 	resp, err := f.low.GetMarketsId(ctx, marketID)
+	op.done(resp, err)
 	if err != nil {
 		return nil, wrapTransportError(ctx, err)
 	}
@@ -193,7 +202,9 @@ func (f *Facade) GetToken(ctx context.Context, tokenID string) (*Token, error) {
 	body := PostMarketsInformationJSONRequestBody{
 		"clobTokenIds": []string{tokenID},
 	}
+	op := f.observe("GetToken", "POST", "/markets/information")
 	resp, err := f.low.PostMarketsInformation(ctx, body)
+	op.done(resp, err)
 	if err != nil {
 		return nil, wrapTransportError(ctx, err)
 	}

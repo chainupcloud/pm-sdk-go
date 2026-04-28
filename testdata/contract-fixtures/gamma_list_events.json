@@ -1,0 +1,37 @@
+{
+  "name": "ListEvents happy path (placeholder)",
+  "comment": "TODO: replace with real staging recording.",
+  "request": {
+    "method": "GET",
+    "path": "/events",
+    "query": {"limit": "20", "active": "true"},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": [
+      {
+        "id": "ev-1",
+        "slug": "fixture-event",
+        "title": "Fixture Event",
+        "active": true,
+        "closed": false,
+        "archived": false,
+        "markets": [
+          {
+            "id": "mk-1",
+            "conditionId": "0xcondition1",
+            "question": "Will fixture happen?",
+            "active": true,
+            "closed": false,
+            "acceptingOrders": true,
+            "clobTokenIds": "[\"100200300\",\"100200301\"]"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "GetMarket happy path (placeholder)",
+  "comment": "TODO: replace with real staging recording.",
+  "request": {
+    "method": "GET",
+    "path": "/markets/mk-1",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "id": "mk-1",
+      "conditionId": "0xcondition1",
+      "question": "Will fixture happen?",
+      "slug": "fixture-market",
+      "active": true,
+      "closed": false,
+      "acceptingOrders": true,
+      "clobTokenIds": "[\"100200300\",\"100200301\"]"
+    }
+  }
+}

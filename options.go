@@ -70,10 +70,24 @@ func WithUserAgent(ua string) Option {
 }
 
 // WithLogger 注入 zap 风格的轻量 Logger 钩子。默认 nop。
+//
+// 可用 pkg/obs/zapobs.New(*zap.Logger) 构造 zap adapter。
 func WithLogger(l Logger) Option {
 	return func(c *config) {
 		if l != nil {
 			c.logger = l
+		}
+	}
+}
+
+// WithMetrics 注入 prometheus 风格的轻量 Metrics 钩子。默认 nop。
+//
+// 可用 pkg/obs/promobs.New(prometheus.Registerer) 构造 prometheus adapter。
+// SDK 暴露的标准指标见 pkg/obs/metrics.go 的 Metric* 常量。
+func WithMetrics(m Metrics) Option {
+	return func(c *config) {
+		if m != nil {
+			c.metrics = m
 		}
 	}
 }

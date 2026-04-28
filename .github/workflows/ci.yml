@@ -28,6 +28,25 @@ jobs:
       - name: go build
         run: go build ./...
 
+  contract-tests:
+    # Phase 7 contract test：跑 testdata/contract-fixtures/ 里的录回放 case。
+    # continue-on-error: fixture 是 staging 联调产物；若 placeholder 与代码偏差导致失败，
+    # 不阻塞 PR 主 checks，但能通过 GitHub UI 看到 job 状态。
+    name: contract tests (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: go test -tags contract
+        run: go test -tags contract ./...
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest

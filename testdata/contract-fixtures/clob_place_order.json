@@ -1,0 +1,21 @@
+{
+  "name": "PlaceOrder happy path (placeholder)",
+  "comment": "TODO: replace with real staging recording. Placeholder lets the contract test framework run end-to-end.",
+  "request": {
+    "method": "POST",
+    "path": "/order",
+    "body": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Request-Id": "fixture-place-order-001"
+    },
+    "body": {
+      "success": true,
+      "orderID": "0xfixtureorderid000000000000000000000000000000000000000000000000",
+      "status": "live"
+    }
+  }
+}

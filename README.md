@@ -6,9 +6,11 @@
 
 ## 状态
 
-> v0.1.0 开发中 — Phase 2 已落地 codegen pipeline，`pkg/clob` / `pkg/gamma` 暴露 oapi-codegen 生成的低层 *Client；高层门面与业务方法在 Phase 3+ 落地。
+> v0.1.0 开发中 — Phase 7 落地 observability + contract test framework + 完整 API 文档；待 Phase 8 v0.1.0 release。
 
 接口契约权威源：<https://github.com/chainupcloud/pm-cup2026-liquidity/blob/main/docs/design-docs/pm-sdk-go-contract.md>。
+
+完整 API 参考：[`docs/api.md`](docs/api.md)。
 
 ## 快速开始（Phase 2）
 
