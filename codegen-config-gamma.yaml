@@ -1,0 +1,13 @@
+# oapi-codegen 配置：pkg/gamma/generated.go
+#
+# 上游 OpenAPI：chainupcloud/pm-cup2026:pm-v2 services/gamma-service/api/openapi.yaml
+# 由 scripts/codegen.sh 调用；不要手改 generated.go，改 spec 或本配置后重跑脚本。
+package: gamma
+generate:
+  models: true
+  client: true
+  embedded-spec: true
+output: pkg/gamma/generated.go
+output-options:
+  # 与 clob 保持一致；预防未来 spec 引入同名 schema 时的命名冲突
+  response-type-suffix: Resp

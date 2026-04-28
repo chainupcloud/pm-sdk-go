@@ -41,7 +41,7 @@ jobs:
           check-latest: true
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.4
 
@@ -57,10 +57,28 @@ jobs:
           go-version: "1.26"
           check-latest: true
 
-      # Phase 1 仅 stub；Phase 2 起本步骤会实拉 OpenAPI 跑 oapi-codegen，
-      # 然后 git diff --exit-code 校验 pkg/{clob,gamma}/generated.go 不漂移。
+      # 拉 chainupcloud/pm-cup2026:pm-v2 OpenAPI 后跑 oapi-codegen，
+      # 再用 git diff --exit-code 校验 pkg/{clob,gamma}/generated.go 不漂移。
+      # pm-cup2026 是 private repo，需仓库 secret PMCUP2026_READ_TOKEN（PAT, repo:read）。
+      # secret 缺失时本 step 打 notice 跳过（不阻塞 PR），由本地 codegen + reviewer 兜底。
+      - name: check secret
+        id: secret
+        env:
+          TOKEN: ${{ secrets.PMCUP2026_READ_TOKEN }}
+        run: |
+          if [[ -z "$TOKEN" ]]; then
+            echo "::notice::PMCUP2026_READ_TOKEN secret is not configured; codegen drift check skipped"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: run codegen
+        if: steps.secret.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.PMCUP2026_READ_TOKEN }}
         run: bash scripts/codegen.sh
 
       - name: ensure generated files unchanged
-        run: git diff --exit-code
+        if: steps.secret.outputs.skip == 'false'
+        run: git diff --exit-code pkg/clob/generated.go pkg/gamma/generated.go

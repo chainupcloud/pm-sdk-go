@@ -1,0 +1,13 @@
+# oapi-codegen 配置：pkg/clob/generated.go
+#
+# 上游 OpenAPI：chainupcloud/pm-cup2026:pm-v2 services/clob-service/docs/openapi.yaml
+# 由 scripts/codegen.sh 调用；不要手改 generated.go，改 spec 或本配置后重跑脚本。
+package: clob
+generate:
+  models: true
+  client: true
+  embedded-spec: true
+output: pkg/clob/generated.go
+output-options:
+  # 上游 spec 中已有 schema CancelOrdersResponse；给 operation response 包装类型加 Resp 后缀避免重名
+  response-type-suffix: Resp
