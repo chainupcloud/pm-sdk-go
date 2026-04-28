@@ -15,11 +15,12 @@ import (
 // Phase 3：Clob 切换到手写门面 *clob.Facade。
 // Phase 4：Gamma 切换到手写门面 *gamma.Facade（GetEvent / ListEvents /
 // GetMarket / GetToken）。
-// WS 仍是 Phase 1 占位，Phase 5 替换。
+// Phase 5：WS 切换到手写门面 *ws.Facade（SubscribeBook / SubscribeOrders +
+// 自动重连 + sequence guard）。
 type Client struct {
 	Clob  *clob.Facade
 	Gamma *gamma.Facade
-	WS    *ws.Client
+	WS    *ws.Facade
 
 	cfg *config
 }
@@ -36,6 +37,9 @@ type config struct {
 	signer      signer.Signer
 	logger      Logger
 	rateLimit   int // requests per second; 0 表示不限速
+
+	// wsUserAuth 是 ws 用户频道凭证（SubscribeOrders 必需）；nil 时 SubscribeOrders 报 ErrSign。
+	wsUserAuth *ws.UserAuth
 }
 
 // defaults 返回默认配置。真实默认 endpoint 将在后续 phase 接入 servers 字段推导。
@@ -73,11 +77,19 @@ func New(opts ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	wsOpts := []ws.FacadeOption{}
+	if cfg.wsUserAuth != nil {
+		wsOpts = append(wsOpts, ws.WithUserAuth(*cfg.wsUserAuth))
+	}
+	wsFacade, err := ws.NewFacade(cfg.wsURL, wsOpts...)
+	if err != nil {
+		return nil, err
+	}
 
 	return &Client{
 		Clob:  clobFacade,
 		Gamma: gammaFacade,
-		WS:    ws.NewStub(),
+		WS:    wsFacade,
 		cfg:   cfg,
 	}, nil
 }
