@@ -69,6 +69,15 @@ func (e *APIError) Unwrap() error {
 	return e.sentinel
 }
 
+// SetSentinel 设置 Unwrap 返回的哨兵 error；供同 module 内其他子包（如 gamma）
+// 在自己的 wrapHTTPError 中复用同一份 *APIError 类型时挂钩 sentinel。
+func (e *APIError) SetSentinel(s error) {
+	if e == nil {
+		return
+	}
+	e.sentinel = s
+}
+
 // 限制原始 body 留存大小，避免内存膨胀。
 const maxStoredBody = 8 * 1024
 
