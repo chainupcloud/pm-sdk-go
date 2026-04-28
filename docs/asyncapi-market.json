@@ -1,0 +1,318 @@
+{
+  "asyncapi": "3.0.0",
+  "info": {
+    "title": "CLOB Service WebSocket API — Market Channel",
+    "version": "1.0.0",
+    "description": "Public WebSocket channel for real-time market data. Stream orderbook snapshots, price changes, trade executions, and market lifecycle events.\n\nCompatible with Polymarket Market Channel, with extensions for multi-tenant support."
+  },
+  "servers": {
+    "local": {
+      "host": "localhost:8082",
+      "pathname": "/ws/market",
+      "protocol": "ws",
+      "description": "Local development WebSocket server"
+    }
+  },
+  "channels": {
+    "market": {
+      "address": "/ws/market",
+      "title": "Market Channel",
+      "description": "Public channel for real-time market data. No authentication required. Subscribe by providing asset IDs (token IDs).",
+      "messages": {
+        "subscriptionRequest": { "$ref": "#/components/messages/subscriptionRequest" },
+        "subscriptionRequestUpdate": { "$ref": "#/components/messages/subscriptionRequestUpdate" },
+        "ping": { "$ref": "#/components/messages/ping" },
+        "pong": { "$ref": "#/components/messages/pong" },
+        "book": { "$ref": "#/components/messages/book" },
+        "priceChange": { "$ref": "#/components/messages/priceChange" },
+        "lastTradePrice": { "$ref": "#/components/messages/lastTradePrice" },
+        "tickSizeChange": { "$ref": "#/components/messages/tickSizeChange" },
+        "bestBidAsk": { "$ref": "#/components/messages/bestBidAsk" },
+        "newMarket": { "$ref": "#/components/messages/newMarket" },
+        "marketResolved": { "$ref": "#/components/messages/marketResolved" }
+      }
+    }
+  },
+  "operations": {
+    "subscribe": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/market" },
+      "title": "Subscribe",
+      "summary": "Send initial subscription request upon connecting",
+      "description": "First message after WebSocket connection. Specifies which asset IDs to receive updates for. Server responds with an initial orderbook snapshot for each subscribed asset (when initial_dump=true).",
+      "messages": [{ "$ref": "#/channels/market/messages/subscriptionRequest" }]
+    },
+    "updateSubscription": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/market" },
+      "title": "Update Subscription",
+      "summary": "Dynamically subscribe/unsubscribe without reconnecting",
+      "messages": [{ "$ref": "#/channels/market/messages/subscriptionRequestUpdate" }]
+    },
+    "ping": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/market" },
+      "title": "Ping",
+      "summary": "Send PING every 10 seconds to keep connection alive",
+      "messages": [{ "$ref": "#/channels/market/messages/ping" }]
+    },
+    "receiveBook": {
+      "action": "send",
+      "channel": { "$ref": "#/channels/market" },
+      "title": "Book Snapshot",
+      "summary": "Full orderbook snapshot",
+      "messages": [{ "$ref": "#/channels/market/messages/book" }]
+    },
+    "receivePriceChange": {
+      "action": "send",
+      "channel": { "$ref": "#/channels/market" },
+      "title": "Price Change",
+      "summary": "Orderbook delta update",
+      "messages": [{ "$ref": "#/channels/market/messages/priceChange" }]
+    },
+    "receiveLastTradePrice": {
+      "action": "send",
+      "channel": { "$ref": "#/channels/market" },
+      "title": "Last Trade Price",
+      "summary": "Trade execution notification",
+      "messages": [{ "$ref": "#/channels/market/messages/lastTradePrice" }]
+    }
+  },
+  "components": {
+    "messages": {
+      "subscriptionRequest": {
+        "name": "subscriptionRequest",
+        "title": "Subscription Request",
+        "summary": "Initial subscription message sent after connection",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "required": ["assets_ids", "type"],
+          "properties": {
+            "assets_ids": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Token IDs to subscribe to"
+            },
+            "type": {
+              "type": "string",
+              "const": "market"
+            },
+            "initial_dump": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether to send initial orderbook snapshot"
+            },
+            "level": {
+              "type": "integer",
+              "enum": [1, 2, 3],
+              "default": 2,
+              "description": "Orderbook depth level"
+            },
+            "custom_feature_enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable best_bid_ask, new_market, market_resolved events"
+            }
+          }
+        }
+      },
+      "subscriptionRequestUpdate": {
+        "name": "subscriptionRequestUpdate",
+        "title": "Dynamic Subscription Update",
+        "summary": "Subscribe or unsubscribe from assets at runtime",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "required": ["operation", "assets_ids"],
+          "properties": {
+            "operation": {
+              "type": "string",
+              "enum": ["subscribe", "unsubscribe"]
+            },
+            "assets_ids": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "level": {
+              "type": "integer",
+              "enum": [1, 2, 3]
+            },
+            "custom_feature_enabled": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "ping": {
+        "name": "ping",
+        "title": "Ping",
+        "summary": "Client sends PING to keep connection alive (every 10s)",
+        "contentType": "text/plain",
+        "payload": { "type": "string", "const": "PING" }
+      },
+      "pong": {
+        "name": "pong",
+        "title": "Pong",
+        "summary": "Server responds with PONG",
+        "contentType": "text/plain",
+        "payload": { "type": "string", "const": "PONG" }
+      },
+      "book": {
+        "name": "book",
+        "title": "Book Snapshot",
+        "summary": "Full orderbook snapshot for an asset",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "properties": {
+            "event_type": { "type": "string", "const": "book" },
+            "asset_id": { "type": "string" },
+            "market": { "type": "string", "description": "Condition ID" },
+            "bids": {
+              "type": "array",
+              "items": { "$ref": "#/components/schemas/OrderLevel" }
+            },
+            "asks": {
+              "type": "array",
+              "items": { "$ref": "#/components/schemas/OrderLevel" }
+            },
+            "timestamp": { "type": "integer", "description": "Unix ms" },
+            "hash": { "type": "string" }
+          }
+        }
+      },
+      "priceChange": {
+        "name": "priceChange",
+        "title": "Price Change",
+        "summary": "Orderbook delta update — price level added, updated, or removed",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "properties": {
+            "event_type": { "type": "string", "const": "price_change" },
+            "market": { "type": "string" },
+            "price_changes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "asset_id": { "type": "string" },
+                  "price": { "type": "string" },
+                  "size": { "type": "string", "description": "0 = level removed" },
+                  "side": { "type": "string", "enum": ["BUY", "SELL"] },
+                  "hash": { "type": "string" },
+                  "best_bid": { "type": "string" },
+                  "best_ask": { "type": "string" }
+                }
+              }
+            },
+            "timestamp": { "type": "integer" }
+          }
+        }
+      },
+      "lastTradePrice": {
+        "name": "lastTradePrice",
+        "title": "Last Trade Price",
+        "summary": "A trade was executed",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "properties": {
+            "event_type": { "type": "string", "const": "last_trade_price" },
+            "asset_id": { "type": "string" },
+            "market": { "type": "string" },
+            "price": { "type": "string" },
+            "size": { "type": "string" },
+            "fee_rate_bps": { "type": "string" },
+            "side": { "type": "string", "enum": ["BUY", "SELL"] },
+            "timestamp": { "type": "integer" },
+            "transaction_hash": { "type": "string" }
+          }
+        }
+      },
+      "tickSizeChange": {
+        "name": "tickSizeChange",
+        "title": "Tick Size Change",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "properties": {
+            "event_type": { "type": "string", "const": "tick_size_change" },
+            "asset_id": { "type": "string" },
+            "market": { "type": "string" },
+            "old_tick_size": { "type": "string" },
+            "new_tick_size": { "type": "string" },
+            "timestamp": { "type": "integer" }
+          }
+        }
+      },
+      "bestBidAsk": {
+        "name": "bestBidAsk",
+        "title": "Best Bid/Ask",
+        "summary": "Requires custom_feature_enabled=true",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "properties": {
+            "event_type": { "type": "string", "const": "best_bid_ask" },
+            "asset_id": { "type": "string" },
+            "market": { "type": "string" },
+            "best_bid": { "type": "string" },
+            "best_ask": { "type": "string" },
+            "spread": { "type": "string" },
+            "timestamp": { "type": "integer" }
+          }
+        }
+      },
+      "newMarket": {
+        "name": "newMarket",
+        "title": "New Market",
+        "summary": "Requires custom_feature_enabled=true",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "properties": {
+            "event_type": { "type": "string", "const": "new_market" },
+            "id": { "type": "string" },
+            "question": { "type": "string" },
+            "market": { "type": "string" },
+            "slug": { "type": "string" },
+            "assets_ids": { "type": "array", "items": { "type": "string" } },
+            "outcomes": { "type": "array", "items": { "type": "string" } },
+            "tags": { "type": "array", "items": { "type": "string" } },
+            "timestamp": { "type": "integer" }
+          }
+        }
+      },
+      "marketResolved": {
+        "name": "marketResolved",
+        "title": "Market Resolved",
+        "summary": "Requires custom_feature_enabled=true",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "properties": {
+            "event_type": { "type": "string", "const": "market_resolved" },
+            "id": { "type": "string" },
+            "market": { "type": "string" },
+            "assets_ids": { "type": "array", "items": { "type": "string" } },
+            "winning_asset_id": { "type": "string" },
+            "winning_outcome": { "type": "string" },
+            "tags": { "type": "array", "items": { "type": "string" } },
+            "timestamp": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "OrderLevel": {
+        "type": "object",
+        "properties": {
+          "price": { "type": "string" },
+          "size": { "type": "string" }
+        }
+      }
+    }
+  }
+}

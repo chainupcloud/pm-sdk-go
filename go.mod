@@ -3,9 +3,11 @@ module github.com/chainupcloud/pm-sdk-go
 go 1.26
 
 require (
+	github.com/coder/websocket v1.8.14
 	github.com/getkin/kin-openapi v0.136.0
 	github.com/oapi-codegen/oapi-codegen/v2 v2.6.0
 	github.com/oapi-codegen/runtime v1.4.0
+	github.com/shopspring/decimal v1.4.0
 )
 
 require (
@@ -21,7 +23,6 @@ require (
 	github.com/oasdiff/yaml3 v0.0.12 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
-	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/speakeasy-api/jsonpath v0.6.0 // indirect
 	github.com/speakeasy-api/openapi-overlay v0.10.2 // indirect
 	github.com/vmware-labs/yaml-jsonpath v0.3.2 // indirect

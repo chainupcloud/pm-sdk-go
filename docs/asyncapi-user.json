@@ -1,0 +1,244 @@
+{
+  "asyncapi": "3.0.0",
+  "info": {
+    "title": "CLOB Service WebSocket API — User Channel",
+    "version": "1.0.0",
+    "description": "Authenticated WebSocket channel for real-time order and trade updates.\n\nRequires CLOB API credentials (apiKey + passphrase) in the initial subscription message.\n\nCompatible with Polymarket User Channel. Order/trade status enums use prefixed values (ORDER_STATUS_*, TRADE_STATUS_*)."
+  },
+  "servers": {
+    "local": {
+      "host": "localhost:8082",
+      "pathname": "/ws/user",
+      "protocol": "ws",
+      "description": "Local development WebSocket server"
+    }
+  },
+  "channels": {
+    "user": {
+      "address": "/ws/user",
+      "title": "User Channel",
+      "description": "Authenticated channel for real-time order and trade updates. Send API credentials in the initial subscription message. Optionally filter by market condition IDs — empty markets array subscribes to all markets.",
+      "messages": {
+        "userSubscriptionRequest": { "$ref": "#/components/messages/userSubscriptionRequest" },
+        "userSubscriptionRequestUpdate": { "$ref": "#/components/messages/userSubscriptionRequestUpdate" },
+        "ping": { "$ref": "#/components/messages/ping" },
+        "pong": { "$ref": "#/components/messages/pong" },
+        "order": { "$ref": "#/components/messages/order" },
+        "trade": { "$ref": "#/components/messages/trade" }
+      }
+    }
+  },
+  "operations": {
+    "subscribe": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/user" },
+      "title": "Subscribe",
+      "summary": "Send authenticated subscription request (first message after connect)",
+      "description": "Must be sent within 30 seconds of connecting. Includes API credentials for authentication. Optionally include market condition IDs to filter events.",
+      "messages": [{ "$ref": "#/channels/user/messages/userSubscriptionRequest" }]
+    },
+    "updateSubscription": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/user" },
+      "title": "Update Subscription",
+      "summary": "Dynamically subscribe/unsubscribe from markets",
+      "messages": [{ "$ref": "#/channels/user/messages/userSubscriptionRequestUpdate" }]
+    },
+    "ping": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/user" },
+      "title": "Ping",
+      "summary": "Client sends PING every 10 seconds to keep connection alive",
+      "messages": [{ "$ref": "#/channels/user/messages/ping" }]
+    },
+    "receiveOrder": {
+      "action": "send",
+      "channel": { "$ref": "#/channels/user" },
+      "title": "Order Event",
+      "summary": "Order placement, update, or cancellation notification",
+      "messages": [{ "$ref": "#/channels/user/messages/order" }]
+    },
+    "receiveTrade": {
+      "action": "send",
+      "channel": { "$ref": "#/channels/user" },
+      "title": "Trade Event",
+      "summary": "Trade execution and settlement status update",
+      "messages": [{ "$ref": "#/channels/user/messages/trade" }]
+    }
+  },
+  "components": {
+    "messages": {
+      "userSubscriptionRequest": {
+        "name": "userSubscriptionRequest",
+        "title": "Authenticated Subscription Request",
+        "summary": "First message after connection — includes API credentials",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "required": ["auth", "type"],
+          "properties": {
+            "auth": {
+              "type": "object",
+              "required": ["apiKey", "passphrase"],
+              "properties": {
+                "apiKey": { "type": "string", "description": "API Key (from POST /auth/api-key)" },
+                "secret": { "type": "string", "description": "API Secret (base64, currently unused for WS auth)" },
+                "passphrase": { "type": "string", "description": "Passphrase (validated against stored value)" }
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "user"
+            },
+            "markets": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Condition IDs to filter. Empty array = subscribe to all markets."
+            }
+          }
+        }
+      },
+      "userSubscriptionRequestUpdate": {
+        "name": "userSubscriptionRequestUpdate",
+        "title": "Dynamic Subscription Update",
+        "summary": "Subscribe or unsubscribe from markets at runtime",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "required": ["operation", "markets"],
+          "properties": {
+            "operation": {
+              "type": "string",
+              "enum": ["subscribe", "unsubscribe"]
+            },
+            "markets": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Condition IDs"
+            }
+          }
+        }
+      },
+      "ping": {
+        "name": "ping",
+        "title": "Ping",
+        "contentType": "text/plain",
+        "payload": { "type": "string", "const": "PING" }
+      },
+      "pong": {
+        "name": "pong",
+        "title": "Pong",
+        "contentType": "text/plain",
+        "payload": { "type": "string", "const": "PONG" }
+      },
+      "order": {
+        "name": "order",
+        "title": "Order Event",
+        "summary": "Order placement, update, or cancellation",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "properties": {
+            "event_type": { "type": "string", "const": "order" },
+            "type": {
+              "type": "string",
+              "enum": ["PLACEMENT", "UPDATE", "CANCELLATION"],
+              "description": "Event sub-type"
+            },
+            "id": { "type": "string", "description": "Order hash (0x...)" },
+            "owner": { "type": "string", "description": "Owner UUID" },
+            "market": { "type": "string", "description": "Condition ID" },
+            "asset_id": { "type": "string", "description": "Token ID" },
+            "side": { "type": "string", "enum": ["BUY", "SELL"] },
+            "original_size": { "type": "string" },
+            "size_matched": { "type": "string" },
+            "price": { "type": "string" },
+            "outcome": { "type": "string" },
+            "order_type": { "type": "string", "enum": ["GTC", "GTD", "FOK", "FAK"] },
+            "status": {
+              "type": "string",
+              "enum": [
+                "ORDER_STATUS_LIVE",
+                "ORDER_STATUS_MATCHED",
+                "ORDER_STATUS_CANCELED",
+                "ORDER_STATUS_CANCELED_MARKET_RESOLVED",
+                "ORDER_STATUS_INVALID"
+              ]
+            },
+            "maker_address": { "type": "string" },
+            "expiration": { "type": "integer", "description": "Unix timestamp (0=never)" },
+            "created_at": { "type": "integer", "description": "Unix timestamp" },
+            "associate_trades": {
+              "type": "array",
+              "items": { "type": "string" },
+              "nullable": true,
+              "description": "Associated trade UUIDs"
+            },
+            "timestamp": { "type": "integer", "description": "Event timestamp (Unix sec)" }
+          }
+        }
+      },
+      "trade": {
+        "name": "trade",
+        "title": "Trade Event",
+        "summary": "Trade execution and settlement status update",
+        "contentType": "application/json",
+        "payload": {
+          "type": "object",
+          "properties": {
+            "event_type": { "type": "string", "const": "trade" },
+            "type": { "type": "string", "const": "TRADE" },
+            "id": { "type": "string", "description": "Trade UUID" },
+            "taker_order_id": { "type": "string", "description": "Taker order hash" },
+            "market": { "type": "string", "description": "Condition ID" },
+            "asset_id": { "type": "string", "description": "Token ID (querying user's side)" },
+            "side": { "type": "string", "enum": ["BUY", "SELL"] },
+            "size": { "type": "string" },
+            "price": { "type": "string" },
+            "fee_rate_bps": { "type": "string" },
+            "status": {
+              "type": "string",
+              "enum": [
+                "TRADE_STATUS_MATCHED",
+                "TRADE_STATUS_MINED",
+                "TRADE_STATUS_CONFIRMED",
+                "TRADE_STATUS_RETRYING",
+                "TRADE_STATUS_FAILED"
+              ]
+            },
+            "outcome": { "type": "string" },
+            "owner": { "type": "string", "description": "Owner UUID" },
+            "maker_address": { "type": "string" },
+            "transaction_hash": { "type": "string" },
+            "bucket_index": { "type": "integer" },
+            "matchtime": { "type": "integer", "description": "Unix sec" },
+            "last_update": { "type": "integer", "description": "Unix sec" },
+            "trader_side": { "type": "string", "enum": ["TAKER", "MAKER"] },
+            "maker_orders": {
+              "type": "array",
+              "description": "Maker fill details (empty when trader_side=MAKER)",
+              "items": { "$ref": "#/components/schemas/MakerOrderFill" }
+            },
+            "timestamp": { "type": "integer", "description": "Event timestamp (Unix sec)" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "MakerOrderFill": {
+        "type": "object",
+        "properties": {
+          "order_id": { "type": "string" },
+          "owner": { "type": "string" },
+          "maker_address": { "type": "string" },
+          "matched_amount": { "type": "string" },
+          "price": { "type": "string" },
+          "fee_rate_bps": { "type": "string" },
+          "asset_id": { "type": "string" },
+          "outcome": { "type": "string" },
+          "side": { "type": "string", "enum": ["BUY", "SELL"] }
+        }
+      }
+    }
+  }
+}

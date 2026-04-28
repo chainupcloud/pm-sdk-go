@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/chainupcloud/pm-sdk-go/pkg/signer"
+	"github.com/chainupcloud/pm-sdk-go/pkg/ws"
 )
 
 // Option 是 New 的配置入参。所有 With* 函数返回 Option。
@@ -84,5 +85,14 @@ func WithRateLimit(rps int) Option {
 		if rps >= 0 {
 			c.rateLimit = rps
 		}
+	}
+}
+
+// WithWSUserAuth 注入 WebSocket 用户频道凭证（apiKey + passphrase）。
+// 缺失时 Client.WS.SubscribeOrders 返回 ErrSign。
+func WithWSUserAuth(auth ws.UserAuth) Option {
+	return func(c *config) {
+		a := auth
+		c.wsUserAuth = &a
 	}
 }
