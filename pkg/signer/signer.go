@@ -4,9 +4,8 @@ import "context"
 
 // Signer 是签名器统一接口。
 //
-// TODO Phase 6: 在 eip712.go / pmcup26.go 中提供实际实现：
-//   - NewEIP712Signer(privKey *ecdsa.PrivateKey, domainSeparator [32]byte) Signer
-//   - NewPMCup26Signer(privKey *ecdsa.PrivateKey, scopeID string) Signer
+// 实现见同包 eip712.go (NewEIP712Signer) 与 pmcup26.go (NewPMCup26Signer)；
+// 均要求 Sign 的 payload 是 32-byte EIP-712 structHash。
 type Signer interface {
 	// Sign 对 payload 做签名，返回签名字节。
 	Sign(ctx context.Context, payload []byte) ([]byte, error)
