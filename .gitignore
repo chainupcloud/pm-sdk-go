@@ -31,3 +31,6 @@ coverage.html
 # 本地环境
 .env
 .env.local
+
+# codegen 临时目录（scripts/codegen.sh 拉 OpenAPI 与本地 oapi-codegen 二进制的落地点）
+.tmp/

@@ -6,11 +6,11 @@
 
 ## 状态
 
-> v0.1.0 开发中 — 当前仓内为 **Phase 1 骨架**：仅暴露顶层 Client / Options / 子包占位，业务方法尚未实现。
+> v0.1.0 开发中 — Phase 2 已落地 codegen pipeline，`pkg/clob` / `pkg/gamma` 暴露 oapi-codegen 生成的低层 *Client；高层门面与业务方法在 Phase 3+ 落地。
 
-接口契约见 [`docs/contract.md`](docs/contract.md)（权威来源：`chainupcloud/pm-cup2026-liquidity` 仓 `docs/design-docs/pm-sdk-go-contract.md`）。
+接口契约权威源：<https://github.com/chainupcloud/pm-cup2026-liquidity/blob/main/docs/design-docs/pm-sdk-go-contract.md>。
 
-## 快速开始（Phase 1 占位）
+## 快速开始（Phase 2）
 
 ```go
 package main
@@ -46,12 +46,24 @@ func main() {
 
 ## OpenAPI 来源
 
-`scripts/codegen.sh`（Phase 2 实施）从 `chainupcloud/pm-cup2026:pm-v2` 拉取以下 spec 生成 `pkg/clob/generated.go` / `pkg/gamma/generated.go`：
+`scripts/codegen.sh` 从 `chainupcloud/pm-cup2026:pm-v2` 拉取以下 spec 生成 `pkg/clob/generated.go` / `pkg/gamma/generated.go`：
 
 | 子包 | OpenAPI 路径 |
 |------|--------------|
 | `pkg/clob` | `services/clob-service/docs/openapi.yaml` |
 | `pkg/gamma` | `services/gamma-service/api/openapi.yaml` |
+
+## Codegen
+
+```bash
+# 本地（需 gh CLI 已登录可访问 chainupcloud/pm-cup2026 的账号）
+./scripts/codegen.sh
+
+# 也可用环境变量 token，无需 gh CLI
+GH_TOKEN=ghp_xxx ./scripts/codegen.sh
+```
+
+不要手改 `pkg/{clob,gamma}/generated.go`；要改：(1) 改上游 spec；或 (2) 改 `codegen-config-{clob,gamma}.yaml`，再重跑脚本。CI 里 `codegen-drift` job 会拉同一份 spec 重跑，与仓内 generated 文件做 `git diff --exit-code` 校验漂移。
 
 ## 路线图
 
@@ -59,8 +71,8 @@ func main() {
 
 | Phase | 目标 |
 |-------|------|
-| 1 | 仓初始化 + 顶层 `Client` / `Option` / 子包占位 + CI（**当前**） |
-| 2 | `scripts/codegen.sh` 实拉 OpenAPI + `oapi-codegen` 输出 generated.go |
+| 1 | 仓初始化 + 顶层 `Client` / `Option` / 子包占位 + CI |
+| 2 | `scripts/codegen.sh` 实拉 OpenAPI + `oapi-codegen` 输出 generated.go（**当前**） |
 | 3 | `pkg/clob` 业务方法 + types + 错误模型 + examples |
 | 4 | `pkg/gamma` 业务方法 + types + examples |
 | 5 | `pkg/ws` 自动重连 / Sequence guard / `SubscribeBook` |
