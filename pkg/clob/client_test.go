@@ -559,12 +559,12 @@ func TestPlaceOrder_PMCup26Signer(t *testing.T) {
 		t.Errorf("Maker = %s, want %s", captured.Order.Maker, signerAddr.Hex())
 	}
 
-	// 反向验证签名：用相同 OrderForSigning 算 digest，ecrecover 应等于 signer 地址
+	// 反向验证签名：用相同 OrderForSigning 算 digest，ecrecover 应等于 signer 地址。
+	// 金额按 6-decimal raw integer（issue #9 toBaseUnits）：
+	// makerAmount = 0.55 * 10 * 10^6 = 5_500_000；takerAmount = 10 * 10^6 = 10_000_000。
 	tokenIDBig := new(big.Int).SetUint64(100200300)
-	makerAmount := decimal.RequireFromString("0.55").Mul(decimal.RequireFromString("10")).String()
-	takerAmount := decimal.RequireFromString("10").String()
-	mAmt, _ := new(big.Int).SetString(makerAmount, 10)
-	tAmt, _ := new(big.Int).SetString(takerAmount, 10)
+	mAmt := big.NewInt(5_500_000)
+	tAmt := big.NewInt(10_000_000)
 
 	order := &pmsigner.OrderForSigning{
 		Salt:          big.NewInt(0),
@@ -651,5 +651,41 @@ func TestExpirationPropagated(t *testing.T) {
 	if captured.Order.Expiration == nil ||
 		*captured.Order.Expiration != "1767225600" {
 		t.Errorf("Expiration upstream = %v", captured.Order.Expiration)
+	}
+}
+
+// TestComputeAmounts_BaseUnits 锁定 issue #9 的 6-decimal scale 行为：
+// BUY 时 makerAmount = price*size*10^6 (USDC raw)，takerAmount = size*10^6 (token raw)；
+// SELL 反之。fractional bits 超过 6 位的 floor truncate。
+func TestComputeAmounts_BaseUnits(t *testing.T) {
+	cases := []struct {
+		name              string
+		side              SdkSide
+		price, size       string
+		wantMaker, wantTk string
+	}{
+		{"BUY_simple", SideBuy, "0.55", "10", "5500000", "10000000"},
+		{"SELL_simple", SideSell, "0.55", "10", "10000000", "5500000"},
+		{"BUY_fraction_truncates", SideBuy, "0.49875", "100", "49875000", "100000000"},
+		{"BUY_seven_decimal_floor", SideBuy, "0.1234567", "1", "123456", "1000000"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := OrderReq{
+				Side:  tc.side,
+				Price: decimal.RequireFromString(tc.price),
+				Size:  decimal.RequireFromString(tc.size),
+			}
+			gotMaker, gotTk, err := computeAmounts(req)
+			if err != nil {
+				t.Fatalf("computeAmounts: %v", err)
+			}
+			if gotMaker != tc.wantMaker {
+				t.Errorf("makerAmount = %q, want %q", gotMaker, tc.wantMaker)
+			}
+			if gotTk != tc.wantTk {
+				t.Errorf("takerAmount = %q, want %q", gotTk, tc.wantTk)
+			}
+		})
 	}
 }
