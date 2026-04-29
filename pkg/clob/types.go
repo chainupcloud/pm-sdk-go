@@ -3,7 +3,10 @@ package clob
 import (
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/shopspring/decimal"
+
+	"github.com/chainupcloud/pm-sdk-go/pkg/signer"
 )
 
 // SDK 层手写类型（契约 §4）。
@@ -73,6 +76,16 @@ type OrderReq struct {
 	// FeeRateBps 单边手续费（基点）。CTFExchange 校验此值 ≥ 部署 minimum，
 	// 同值同时进 EIP-712 签名与 wire payload；零值（默认）保留 v0.1.x 兼容行为。
 	FeeRateBps int64
+	// SignatureType 订单签名类型（契约 §4；零值 = EOA，向后兼容 v0.1.x）。
+	//   0 = EOA               Maker = Signer EOA
+	//   1 = POLY_PROXY        Maker = Polymarket Proxy 合约地址
+	//   2 = POLY_GNOSIS_SAFE  Maker = Safe 合约地址；签名仍由 EOA 私钥执行（Signer 字段保持 EOA）
+	// POLY_GNOSIS_SAFE 时必须显式设置 Maker，否则返 ErrPrecondition。
+	SignatureType signer.SignatureType
+	// Maker 订单 Maker 地址（链上 USDC/CTF 资产持有方）。
+	// 零值 = 退化到 Signer EOA（保留 v0.1.x 行为）；
+	// SignatureType=POLY_GNOSIS_SAFE 时必须为 Safe 合约地址。
+	Maker common.Address
 }
 
 // SdkOrder 是订单详情响应（契约 §4 Order）。

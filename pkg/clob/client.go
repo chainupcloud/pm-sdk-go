@@ -88,6 +88,12 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 		return "", fmt.Errorf("%w: PlaceOrder requires signer (use clob.WithSigner)", ErrSign)
 	}
 
+	// SignatureType=POLY_GNOSIS_SAFE 必须显式 Maker（Safe 地址）；零值会让 wallet-subgraph
+	// 把 Maker 当成未索引的 EOA → INSUFFICIENT_BALANCE。提前返 ErrPrecondition 避免坏单。
+	if req.SignatureType == signer.SignatureTypePolyGnosisSafe && req.Maker == (common.Address{}) {
+		return "", fmt.Errorf("%w: SignatureType=POLY_GNOSIS_SAFE requires non-zero Maker", ErrPrecondition)
+	}
+
 	makerAmount, takerAmount, err := computeAmounts(req)
 	if err != nil {
 		return "", err
@@ -104,6 +110,12 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 	}
 
 	signerAddr := f.signer.Address()
+	// makerAddr 是链上资产持有方：默认退化到 Signer EOA（v0.1.x 行为）；
+	// POLY_GNOSIS_SAFE 模式下由调用方传入 Safe 地址。
+	makerAddr := req.Maker
+	if makerAddr == (common.Address{}) {
+		makerAddr = common.HexToAddress(signerAddr)
+	}
 	makerAmountBig, _ := new(big.Int).SetString(makerAmount, 10)
 	takerAmountBig, _ := new(big.Int).SetString(takerAmount, 10)
 	tokenIDBig, _ := new(big.Int).SetString(req.TokenID, 10)
@@ -119,7 +131,8 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 
 	var sig []byte
 	scopeIDHex := ""
-	signatureType := N0 // generated enum: 0=EOA
+	// signatureType wire enum 与 req.SignatureType 同值：0=EOA / 1=POLY_PROXY / 2=POLY_GNOSIS_SAFE
+	signatureType := mapSignatureTypeWire(req.SignatureType)
 	saltStr := "0"
 	nonceStr := "0"
 	feeRateBpsStr := strconv.FormatInt(req.FeeRateBps, 10)
@@ -131,7 +144,7 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 
 		order := &signer.OrderForSigning{
 			Salt:          big.NewInt(0),
-			Maker:         common.HexToAddress(signerAddr),
+			Maker:         makerAddr,
 			Signer:        common.HexToAddress(signerAddr),
 			Taker:         common.Address{},
 			TokenID:       tokenIDBig,
@@ -141,7 +154,7 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 			Nonce:         0,
 			FeeRateBps:    uint64(req.FeeRateBps),
 			Side:          mapSdkSideToOrderSide(req.Side),
-			SignatureType: signer.SignatureTypeEOA,
+			SignatureType: req.SignatureType,
 			ScopeID:       scope,
 		}
 		sig, err = os.SignOrder(ctx, order)
@@ -159,7 +172,7 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 	}
 
 	order := Order{
-		Maker:         signerAddr,
+		Maker:         makerAddr.Hex(),
 		MakerAmount:   makerAmount,
 		TakerAmount:   takerAmount,
 		Side:          side,
@@ -418,6 +431,19 @@ func computeAmounts(req OrderReq) (string, string, error) {
 		return toBaseUnits(req.Size), toBaseUnits(notional), nil
 	default:
 		return "", "", fmt.Errorf("%w: invalid side %q", ErrPrecondition, req.Side)
+	}
+}
+
+// mapSignatureTypeWire 把 SDK 侧 signer.SignatureType 映射到 generated.OrderSignatureType
+// 字符串枚举（"0"/"1"/"2"）。未知值降级到 EOA(0) 保持向后兼容。
+func mapSignatureTypeWire(t signer.SignatureType) OrderSignatureType {
+	switch t {
+	case signer.SignatureTypePolyProxy:
+		return N1
+	case signer.SignatureTypePolyGnosisSafe:
+		return N2
+	default:
+		return N0
 	}
 }
 
