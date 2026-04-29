@@ -2,6 +2,18 @@
 
 本仓所有显著变更记录于此。版本规范遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.1.3 — 2026-04-29
+
+### `pkg/relayer` — Safe + relayer-service 无 gas 提交（issue #13）
+
+- 新增 `pkg/relayer` 包，把 pm-cup2026/services/clob-service/cmd/market-maker/relayer.go 中已 prod 跑过的 SafeCreate / SafeTx 流程标准化为可复用 SDK：
+  - `Client`：`Submit` / `GetNonce` / `GetDeployed` / `GetTransaction` / `GetTransactions` / `GetRelayPayload` 6 个端点的 thin HTTP wrapper；鉴权支持 `WithAPIKey(RELAYER_API_KEY 头)` + `WithBearer(Authorization: Bearer JWT)` 两条路径，与 relayer-service `internal/auth/middleware.go` 校验顺序对齐。
+  - `BuildSafeCreateDigest` / `BuildSafeTxDigest`：两套独立 EIP-712 域（SafeProxyFactory 3 字段域 + Safe 2 字段域），typeHash 字符串、字段顺序、`keccak256(data)` padding 与 mm V2 实现完全一致；`ParseScopeID` 把 hex 字符串左 padding 到 bytes32。
+  - `Service`：`DeploySafe` / `ExecuteSafeTx` 两个高层方法；一次调用完成 nonce 拉取 → digest 计算 → ECDSA 签名（v 自动 +27 → Safe 期望的 27/28）→ POST `/submit` → 轮询 `/transaction` 至终态；轮询节奏可配（默认 2s × 120 次 ≈ 4 分钟）。
+  - `DigestSigner` 是包内的最小签名抽象（仅一个 `SignDigest(ctx, [32]byte) → 65byte` 方法），`NewPrivateKeySigner(*ecdsa.PrivateKey)` 是开箱即用实现。pkg/signer.Signer 的域分隔符在构造期固化、不适配 Safe 路径每次调用动态域，因此本包没有复用而是另起新接口。
+  - `APIError` + 哨兵 `ErrAuth` / `ErrRateLimit` / `ErrPrecondition` / `ErrNotFound` / `ErrConflict` / `ErrUpstream` / `ErrCancelled` / `ErrInvalidConfig` / `ErrTxFailed` / `ErrTxTimeout` 与 `pkg/clob` 错误模型对称。
+- 测试覆盖：黄金 fixture（`testdata/golden_digests.json`，由 `gen_golden.go` 一次性脚本生成）覆盖 SafeCreate 1 组 + SafeTx 2 组 digest，捕获任何 EIP-712 schema 漂移；HTTP 客户端覆盖 200/400/401/403/404/409/429/5xx + 解析失败 + ctx 取消；Service 覆盖 happy path、已部署幂等、终态 FAILED、轮询 timeout 四个分支。包覆盖率 82.1%。
+
 ## v0.1.0 — 2026-04-28
 
 首个公开版本。按 [pm-sdk-go-contract.md](https://github.com/chainupcloud/pm-cup2026-liquidity/blob/main/docs/design-docs/pm-sdk-go-contract.md) 落地完整 v0.1.0 接口面，作为 `pm-cup2026-liquidity` M10 mirror 模块的下游 SDK 依赖（DEC-030 / DEC-035）。
