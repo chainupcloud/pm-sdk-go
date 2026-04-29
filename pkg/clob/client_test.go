@@ -631,6 +631,118 @@ func hexDigit(c byte) (byte, error) {
 	return 0, fmt.Errorf("bad hex char %q", c)
 }
 
+// TestPlaceOrder_PolyGnosisSafe_Maker 验证 issue #15：当传入 SignatureType=POLY_GNOSIS_SAFE
+// 且 Maker=Safe 地址时，wire payload Order.Maker 是 Safe（不是 Signer EOA），Order.Signer 仍是
+// EOA hex，Order.SignatureType="2"；签名仍是 EOA 私钥对 EIP-712 digest 的输出，ecrecover
+// 反推应得 Signer EOA 地址。Maker / SignatureType 同步进 EIP-712 OrderForSigning。
+func TestPlaceOrder_PolyGnosisSafe_Maker(t *testing.T) {
+	priv, _ := ethcrypto.GenerateKey()
+	signerAddr := ethcrypto.PubkeyToAddress(priv.PublicKey)
+	safeAddr := common.HexToAddress("0xAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAa")
+
+	exchange := common.HexToAddress("0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E")
+	scope := pmsigner.ScopeIDFromHex("0x0000000000000000000000000000000000000000000000000000000000000042")
+	chainID := int64(137)
+
+	pms := pmsigner.NewPMCup26Signer(priv, scope, chainID, pmsigner.WithExchangeAddress(exchange))
+
+	var captured SendOrder
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"orderID":"o-safe-1"}`))
+	}))
+	defer srv.Close()
+
+	f, err := NewFacade(srv.URL, srv.Client(), WithSigner(pms))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := f.PlaceOrder(context.Background(), OrderReq{
+		MarketID:      "0xmarket",
+		TokenID:       "100200300",
+		Side:          SideBuy,
+		OrderType:     OrderTypeLimit,
+		Price:         decimal.RequireFromString("0.55"),
+		Size:          decimal.RequireFromString("10"),
+		ClientOrder:   "client-safe",
+		SignatureType: pmsigner.SignatureTypePolyGnosisSafe,
+		Maker:         safeAddr,
+	})
+	if err != nil {
+		t.Fatalf("PlaceOrder: %v", err)
+	}
+	if id != "o-safe-1" {
+		t.Errorf("OrderID = %q", id)
+	}
+	if captured.Order.Maker != safeAddr.Hex() {
+		t.Errorf("wire Maker = %s, want Safe %s", captured.Order.Maker, safeAddr.Hex())
+	}
+	if captured.Order.Signer != signerAddr.Hex() {
+		t.Errorf("wire Signer = %s, want EOA %s", captured.Order.Signer, signerAddr.Hex())
+	}
+	if captured.Order.SignatureType == nil || *captured.Order.SignatureType != N2 {
+		t.Errorf("wire SignatureType = %v, want N2", captured.Order.SignatureType)
+	}
+
+	// 反向验证签名：Maker 必须用 Safe 进 digest（与 client.go 同步），ecrecover 应得 EOA。
+	tokenIDBig := new(big.Int).SetUint64(100200300)
+	mAmt := big.NewInt(5_500_000)
+	tAmt := big.NewInt(10_000_000)
+	order := &pmsigner.OrderForSigning{
+		Salt:          big.NewInt(0),
+		Maker:         safeAddr,
+		Signer:        signerAddr,
+		Taker:         common.Address{},
+		TokenID:       tokenIDBig,
+		MakerAmount:   mAmt,
+		TakerAmount:   tAmt,
+		Expiration:    0,
+		Nonce:         0,
+		FeeRateBps:    0,
+		Side:          pmsigner.OrderSideBuy,
+		SignatureType: pmsigner.SignatureTypePolyGnosisSafe,
+		ScopeID:       scope,
+	}
+	digest := pmsigner.BuildOrderDigest(order, exchange, chainID)
+	sigBytes, err := hexDecode(captured.Order.Signature[2:])
+	if err != nil {
+		t.Fatalf("decode sig: %v", err)
+	}
+	pub, err := ethcrypto.SigToPub(digest[:], sigBytes)
+	if err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+	got := ethcrypto.PubkeyToAddress(*pub)
+	if got != signerAddr {
+		t.Errorf("recovered = %s, want signer EOA %s", got.Hex(), signerAddr.Hex())
+	}
+}
+
+// TestPlaceOrder_PolyGnosisSafe_MissingMaker_Errors 锁定 issue #15 校验：SignatureType=
+// POLY_GNOSIS_SAFE 但 Maker 零值 → 必须返 ErrPrecondition（避免 wallet-subgraph 把 Maker
+// 当 EOA 而拒签 INSUFFICIENT_BALANCE）。
+func TestPlaceOrder_PolyGnosisSafe_MissingMaker_Errors(t *testing.T) {
+	_, f := newTestServer(t, func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("server should not be called when Maker missing")
+	})
+	_, err := f.PlaceOrder(context.Background(), OrderReq{
+		MarketID:      "m",
+		TokenID:       "t",
+		Side:          SideBuy,
+		OrderType:     OrderTypeLimit,
+		Price:         decimal.NewFromInt(1),
+		Size:          decimal.NewFromInt(1),
+		SignatureType: pmsigner.SignatureTypePolyGnosisSafe,
+		// Maker 留空 → 必须 ErrPrecondition
+	})
+	if !errors.Is(err, ErrPrecondition) {
+		t.Errorf("err = %v, want ErrPrecondition", err)
+	}
+}
+
 func TestExpirationPropagated(t *testing.T) {
 	exp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	var captured SendOrder
