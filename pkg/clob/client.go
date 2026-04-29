@@ -122,7 +122,7 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 	signatureType := N0 // generated enum: 0=EOA
 	saltStr := "0"
 	nonceStr := "0"
-	feeRateBpsStr := "0"
+	feeRateBpsStr := strconv.FormatInt(req.FeeRateBps, 10)
 
 	if os, ok := f.signer.(orderSigner); ok {
 		// 完整 EIP-712 路径
@@ -139,7 +139,7 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 			TakerAmount:   takerAmountBig,
 			Expiration:    expirationUnix,
 			Nonce:         0,
-			FeeRateBps:    0,
+			FeeRateBps:    uint64(req.FeeRateBps),
 			Side:          mapSdkSideToOrderSide(req.Side),
 			SignatureType: signer.SignatureTypeEOA,
 			ScopeID:       scope,
