@@ -70,6 +70,9 @@ type OrderReq struct {
 	ClientOrder string
 	// Expiration GTD 单的过期时间（nil = 不过期）。
 	Expiration *time.Time
+	// FeeRateBps 单边手续费（基点）。CTFExchange 校验此值 ≥ 部署 minimum，
+	// 同值同时进 EIP-712 签名与 wire payload；零值（默认）保留 v0.1.x 兼容行为。
+	FeeRateBps int64
 }
 
 // SdkOrder 是订单详情响应（契约 §4 Order）。
