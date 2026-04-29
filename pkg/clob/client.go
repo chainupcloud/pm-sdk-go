@@ -387,10 +387,22 @@ func (f *Facade) GetTrades(ctx context.Context, filter TradeFilter) ([]SdkTrade,
 
 // ---------- 内部辅助 ----------
 
+// usdcDecimals 是 Polymarket / pm-cup26 staging USDC + CTF 条件 token 的链上精度。
+// CTFExchange 校验 makerAmount/takerAmount 时按此精度的 raw integer 解释，
+// 与 GoPolymarket/polymarket-go-sdk 的 toFixedDecimal 对齐（issue #9）。
+const usdcDecimals = int32(6)
+
+// toBaseUnits 把 decimal 数量转为 6-decimal raw integer 字符串（floor 截断）。
+// 流程：Truncate(6) 截到 6 位精度 → Shift(6) 左移 6 位 → Truncate(0) 取整 → String。
+func toBaseUnits(d decimal.Decimal) string {
+	return d.Truncate(usdcDecimals).Shift(usdcDecimals).Truncate(0).String()
+}
+
 // computeAmounts 把 (price, size, side) 映射成 makerAmount / takerAmount（wire 字符串）。
 //
-// 简化：以 token 6 位精度（Polymarket USDC）为单位；BUY 时 maker 出 USDC（price*size）、
-// 收 token；SELL 反之。Phase 6 的 signer 会按此规则重新校验。
+// 单位约定（issue #9）：以 token 6 位精度（Polymarket USDC + CTF token）为基准单位。
+// BUY 时 maker 出 USDC（price*size），收 token；SELL 反之。两侧均按 6-decimal scaled
+// raw integer 输出，CTFExchange 与 EIP-712 signer 按 base-unit big.Int 解释。
 func computeAmounts(req OrderReq) (string, string, error) {
 	if req.Price.LessThanOrEqual(decimal.Zero) {
 		return "", "", fmt.Errorf("%w: price must be > 0", ErrPrecondition)
@@ -401,9 +413,9 @@ func computeAmounts(req OrderReq) (string, string, error) {
 	notional := req.Price.Mul(req.Size)
 	switch req.Side {
 	case SideBuy:
-		return notional.String(), req.Size.String(), nil
+		return toBaseUnits(notional), toBaseUnits(req.Size), nil
 	case SideSell:
-		return req.Size.String(), notional.String(), nil
+		return toBaseUnits(req.Size), toBaseUnits(notional), nil
 	default:
 		return "", "", fmt.Errorf("%w: invalid side %q", ErrPrecondition, req.Side)
 	}
