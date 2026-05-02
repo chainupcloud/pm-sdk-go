@@ -743,6 +743,51 @@ func TestPlaceOrder_PolyGnosisSafe_MissingMaker_Errors(t *testing.T) {
 	}
 }
 
+// TestPlaceOrder_PostOnlyPropagated 锁定 OrderReq.PostOnly 三态透传到 wire SendOrder.PostOnly：
+//   nil   → wire 缺省（omitempty，后端默认行为）
+//   true  → wire postOnly=true（后端拒填 maker-taker 即时成交）
+//   false → wire postOnly=false（显式允许立即成交）
+func TestPlaceOrder_PostOnlyPropagated(t *testing.T) {
+	tru := true
+	fls := false
+	cases := []struct {
+		name string
+		in   *bool
+		want *bool
+	}{
+		{"nil", nil, nil},
+		{"true", &tru, &tru},
+		{"false", &fls, &fls},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured SendOrder
+			_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(body, &captured)
+				_, _ = w.Write([]byte(`{"orderID":"o-postonly"}`))
+			})
+			_, err := f.PlaceOrder(context.Background(), OrderReq{
+				MarketID: "m", TokenID: "t",
+				Side: SideBuy, OrderType: OrderTypeLimit,
+				Price: decimal.NewFromInt(1), Size: decimal.NewFromInt(1),
+				PostOnly: tc.in,
+			})
+			if err != nil {
+				t.Fatalf("PlaceOrder: %v", err)
+			}
+			switch {
+			case tc.want == nil && captured.PostOnly != nil:
+				t.Errorf("PostOnly = %v, want nil", *captured.PostOnly)
+			case tc.want != nil && captured.PostOnly == nil:
+				t.Errorf("PostOnly = nil, want %v", *tc.want)
+			case tc.want != nil && captured.PostOnly != nil && *tc.want != *captured.PostOnly:
+				t.Errorf("PostOnly = %v, want %v", *captured.PostOnly, *tc.want)
+			}
+		})
+	}
+}
+
 func TestExpirationPropagated(t *testing.T) {
 	exp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	var captured SendOrder

@@ -86,6 +86,11 @@ type OrderReq struct {
 	// 零值 = 退化到 Signer EOA（保留 v0.1.x 行为）；
 	// SignatureType=POLY_GNOSIS_SAFE 时必须为 Safe 合约地址。
 	Maker common.Address
+	// PostOnly 控制订单是否仅作为 maker 挂单（契约 §4 SendOrder.postOnly 透传）。
+	//   nil   = 不透传（保留 v0.1.x 默认行为，由后端决定）
+	//   true  = 拒填 maker-taker 即时成交（若会立即成交则被后端拒绝）
+	//   false = 显式允许立即成交
+	PostOnly *bool
 }
 
 // SdkOrder 是订单详情响应（契约 §4 Order）。
