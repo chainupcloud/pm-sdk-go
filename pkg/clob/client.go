@@ -192,6 +192,7 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 	body := SendOrder{
 		Order:     order,
 		OrderType: &otype,
+		PostOnly:  req.PostOnly,
 	}
 
 	op := f.observe("PlaceOrder", "POST", "/order")
