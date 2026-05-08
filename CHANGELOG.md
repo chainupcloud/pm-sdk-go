@@ -2,6 +2,17 @@
 
 本仓所有显著变更记录于此。版本规范遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.1.6 — 2026-05-08
+
+### `pkg/clob` — Facade `PlaceOrders` / `CancelOrders` 批量下/撤单（chainupcloud/pm-cup2026-liquidity#389）
+
+- 新增 `Facade.PlaceOrders(ctx, []OrderReq) ([]PlaceResult, error)`：每笔 OrderReq 独立走 EIP-712 签名（沿用单笔 PlaceOrder 的 `signOne` 逻辑，避免漂移），一次 `POST /orders` 批量 RPC；上游响应 `[]SendOrderResponse` 按 wire 顺序回填到与入参 reqs 同序的 results 切片。`PlaceResult{OrderID, Err}` 单笔失败仅写 `Err`，外层 err 仅描述 transport / 非 2xx / 解码故障。
+- 新增 `Facade.CancelOrders(ctx, []OrderID) ([]CancelResult, error)`：一次 `DELETE /orders` 批量 RPC，body 是 JSON `[]string`（对齐 OpenAPI `CancelOrdersJSONBody0` union 分支，绕开 generated `CancelOrdersJSONBody{union json.RawMessage}` 默认 marshal 输出 `{}` 的坑）；上游 `CancelOrdersResponse{canceled, not_canceled}` 按 ID 回填到 results。`CancelResult{ID, Err}` 单笔失败仅写 `Err`。空 ID 视作 `ErrPrecondition`，不参与 RPC。
+- `PlaceOrder` 内部抽出 `signOne` helper；行为不变，单测全过。
+- obs / metrics：批量入口分别用 `("PlaceOrders","POST","/orders")` / `("CancelOrders","DELETE","/orders")` 标签，沿用单笔 obsCall 范式。
+- 单测覆盖（`pkg/clob/client_batch_test.go`）：PlaceOrders 全成功 / 部分失败 / 全失败 / transport / 无 signer / 空切片；CancelOrders 全成功 / 部分失败 / 全失败 / transport / 空 + 空 ID。共 11 个新用例。
+- 上游契约：`pm-cup2026-liquidity` `order_router.PlaceMulti` 单 tick RPC 数从 ~28 降到 ~2（14 cancel + 14 place → 1 cancel + 1 place）。
+
 ## v0.1.3 — 2026-04-29
 
 ### `pkg/relayer` — Safe + relayer-service 无 gas 提交（issue #13）

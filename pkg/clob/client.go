@@ -84,19 +84,53 @@ type orderSigner interface {
 // 等字段缺省值；后端 verify 端在 OrderForVerification 里对应的零值由 SDK 显式填入
 // 确保 hash 一致。后续 Phase 7 接入 contract test 时会按真实 staging 校验。
 func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) {
+	body, err := f.signOne(ctx, req)
+	if err != nil {
+		return "", err
+	}
+
+	op := f.observe("PlaceOrder", "POST", "/order")
+	resp, err := f.low.PostOrder(ctx, *body, withClientOrderHeader(req.ClientOrder))
+	op.done(resp, err)
+	if err != nil {
+		return "", wrapTransportError(ctx, err)
+	}
+	defer drainBody(resp)
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return "", wrapHTTPError(resp, respBody)
+	}
+
+	parsed, err := unmarshalSendOrderResponse(respBody)
+	if err != nil {
+		return "", fmt.Errorf("%w: decode SendOrderResponse: %v", ErrUpstream, err)
+	}
+	if parsed.OrderID == nil || *parsed.OrderID == "" {
+		return "", fmt.Errorf("%w: empty order id in response", ErrUpstream)
+	}
+	return OrderID(*parsed.OrderID), nil
+}
+
+// signOne 用 Facade 注入的 signer 把单个 OrderReq 构造并签名为 wire 层 SendOrder。
+//
+// 由 PlaceOrder 与 PlaceOrders 共用：所有签名 / 字段映射 / SignatureType 校验逻辑都
+// 收敛在此处，避免单笔与批量路径漂移。返回 (*SendOrder, error)；error 已是带哨兵的
+// 包装错误（ErrSign / ErrPrecondition），调用方原样返回即可。
+func (f *Facade) signOne(ctx context.Context, req OrderReq) (*SendOrder, error) {
 	if f.signer == nil {
-		return "", fmt.Errorf("%w: PlaceOrder requires signer (use clob.WithSigner)", ErrSign)
+		return nil, fmt.Errorf("%w: PlaceOrder requires signer (use clob.WithSigner)", ErrSign)
 	}
 
 	// SignatureType=POLY_GNOSIS_SAFE 必须显式 Maker（Safe 地址）；零值会让 wallet-subgraph
 	// 把 Maker 当成未索引的 EOA → INSUFFICIENT_BALANCE。提前返 ErrPrecondition 避免坏单。
 	if req.SignatureType == signer.SignatureTypePolyGnosisSafe && req.Maker == (common.Address{}) {
-		return "", fmt.Errorf("%w: SignatureType=POLY_GNOSIS_SAFE requires non-zero Maker", ErrPrecondition)
+		return nil, fmt.Errorf("%w: SignatureType=POLY_GNOSIS_SAFE requires non-zero Maker", ErrPrecondition)
 	}
 
 	makerAmount, takerAmount, err := computeAmounts(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	side := mapSide(req.Side)
@@ -159,7 +193,7 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 		}
 		sig, err = os.SignOrder(ctx, order)
 		if err != nil {
-			return "", fmt.Errorf("%w: %v", ErrSign, err)
+			return nil, fmt.Errorf("%w: %v", ErrSign, err)
 		}
 	} else {
 		// 兼容 stub 路径（Phase 3 / mock signer 单测）
@@ -167,7 +201,7 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 			req.Price.String() + "|" + req.Size.String() + "|" + req.ClientOrder)
 		sig, err = f.signer.Sign(ctx, payload)
 		if err != nil {
-			return "", fmt.Errorf("%w: %v", ErrSign, err)
+			return nil, fmt.Errorf("%w: %v", ErrSign, err)
 		}
 	}
 
@@ -189,33 +223,11 @@ func (f *Facade) PlaceOrder(ctx context.Context, req OrderReq) (OrderID, error) 
 	if scopeIDHex != "" {
 		order.ScopeId = &scopeIDHex
 	}
-	body := SendOrder{
+	return &SendOrder{
 		Order:     order,
 		OrderType: &otype,
 		PostOnly:  req.PostOnly,
-	}
-
-	op := f.observe("PlaceOrder", "POST", "/order")
-	resp, err := f.low.PostOrder(ctx, body, withClientOrderHeader(req.ClientOrder))
-	op.done(resp, err)
-	if err != nil {
-		return "", wrapTransportError(ctx, err)
-	}
-	defer drainBody(resp)
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return "", wrapHTTPError(resp, respBody)
-	}
-
-	parsed, err := unmarshalSendOrderResponse(respBody)
-	if err != nil {
-		return "", fmt.Errorf("%w: decode SendOrderResponse: %v", ErrUpstream, err)
-	}
-	if parsed.OrderID == nil || *parsed.OrderID == "" {
-		return "", fmt.Errorf("%w: empty order id in response", ErrUpstream)
-	}
-	return OrderID(*parsed.OrderID), nil
+	}, nil
 }
 
 // CancelOrder 撤单（契约 §4）。
