@@ -232,6 +232,26 @@ func (f *Facade) signOne(ctx context.Context, req OrderReq) (*SendOrder, error) 
 }
 
 // CancelOrder 撤单（契约 §4）。
+// CancelByTokenID 调上游 DELETE /cancel-market-orders，按 token_id 批量撤单。
+//
+// 透传到生成的低层 client；OpenAPI 已暴露 CancelMarketOrders 但 Facade 之前没包。
+// 用于 staging orphan 清理 / mirror runner 跨重启回收孤儿单。
+func (f *Facade) CancelByTokenID(ctx context.Context, tokenID string) error {
+	body := CancelMarketOrdersJSONRequestBody{AssetId: &tokenID}
+	op := f.observe("CancelByTokenID", "DELETE", "/cancel-market-orders")
+	resp, err := f.low.CancelMarketOrders(ctx, body)
+	op.done(resp, err)
+	if err != nil {
+		return wrapTransportError(ctx, err)
+	}
+	defer drainBody(resp)
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return wrapHTTPError(resp, respBody)
+	}
+	return nil
+}
+
 func (f *Facade) CancelOrder(ctx context.Context, id OrderID) error {
 	if id == "" {
 		return fmt.Errorf("%w: empty order id", ErrPrecondition)
