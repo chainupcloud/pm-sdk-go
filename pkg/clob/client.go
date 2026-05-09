@@ -195,6 +195,7 @@ func (f *Facade) signOne(ctx context.Context, req OrderReq) (*SendOrder, error) 
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrSign, err)
 		}
+		sig = normalizeECDSAv(sig)
 	} else {
 		// 兼容 stub 路径（Phase 3 / mock signer 单测）
 		payload := []byte(req.MarketID + "|" + req.TokenID + "|" + string(req.Side) + "|" +

@@ -23,3 +23,24 @@ func unmarshalSendOrderResponse(data []byte) (*SendOrderResponse, error) {
 func bytesToHex(b []byte) string {
 	return hex.EncodeToString(b)
 }
+
+// normalizeECDSAv 把 ethcrypto.Sign 输出的 v ∈ {0,1} 加 27 得到
+// OpenZeppelin ECDSA / Safe.checkSignatures 期望的 {27,28}。
+//
+// 链上 CTFExchange.matchOrders 走 OZ ECDSA.recover；signature_type=2
+// (POLY_GNOSIS_SAFE) 经 Safe.isValidSignature → checkSignatures →
+// 仍走 ECDSA.recover。两路径都要 v ∈ {27,28}，否则 revert
+// "ECDSA: invalid signature 'v' value"。
+//
+// 返回新 slice 不修改入参；非 65 字节直接原样返回。
+func normalizeECDSAv(sig []byte) []byte {
+	if len(sig) != 65 {
+		return sig
+	}
+	out := make([]byte, 65)
+	copy(out, sig)
+	if out[64] < 27 {
+		out[64] += 27
+	}
+	return out
+}
