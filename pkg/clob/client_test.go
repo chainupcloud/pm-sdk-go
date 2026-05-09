@@ -590,7 +590,13 @@ func TestPlaceOrder_PMCup26Signer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode sig: %v", err)
 	}
-	pub, err := ethcrypto.SigToPub(digest[:], sigBytes)
+	// 生产签名 v ∈ {27,28}（OZ ECDSA 期望），SigToPub 要 v ∈ {0,1}，这里反向 -27。
+	if len(sigBytes) != 65 || sigBytes[64] < 27 {
+		t.Fatalf("expect normalized v ∈ {27,28}, got sig=%x", sigBytes)
+	}
+	recoverable := append([]byte(nil), sigBytes...)
+	recoverable[64] -= 27
+	pub, err := ethcrypto.SigToPub(digest[:], recoverable)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -711,7 +717,13 @@ func TestPlaceOrder_PolyGnosisSafe_Maker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode sig: %v", err)
 	}
-	pub, err := ethcrypto.SigToPub(digest[:], sigBytes)
+	// 生产签名 v ∈ {27,28}，SigToPub 要 v ∈ {0,1}，反向 -27。
+	if len(sigBytes) != 65 || sigBytes[64] < 27 {
+		t.Fatalf("expect normalized v ∈ {27,28}, got sig=%x", sigBytes)
+	}
+	recoverable := append([]byte(nil), sigBytes...)
+	recoverable[64] -= 27
+	pub, err := ethcrypto.SigToPub(digest[:], recoverable)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
