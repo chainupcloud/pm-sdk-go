@@ -167,7 +167,13 @@ func (f *Facade) signOne(ctx context.Context, req OrderReq) (*SendOrder, error) 
 	scopeIDHex := ""
 	// signatureType wire enum 与 req.SignatureType 同值：0=EOA / 1=POLY_PROXY / 2=POLY_GNOSIS_SAFE
 	signatureType := mapSignatureTypeWire(req.SignatureType)
-	saltStr := "0"
+	// salt 必须 client 端生成并随签名一起送达：服务端用 client 提供的 salt 落 OrderHash，
+	// 链上 Order.salt 与 EIP-712 signed 输入一致，contract.ECDSA.recover 才能恢复出 maker。
+	// 历史 bug：写死 saltStr="0" → 服务端补默认值（如 hash(order_payload)）→ 链上 salt
+	// 与签名 salt 不一致 → 链上 matchOrders revert (Safe.isValidSignature → bad signer)。
+	// 取 ns 时间戳（uint63）作为 salt：单调递增、无碰撞、与 Polymarket py-clob-client 同款做法。
+	saltBig := big.NewInt(time.Now().UnixNano())
+	saltStr := saltBig.String()
 	nonceStr := "0"
 	feeRateBpsStr := strconv.FormatInt(req.FeeRateBps, 10)
 
@@ -177,7 +183,7 @@ func (f *Facade) signOne(ctx context.Context, req OrderReq) (*SendOrder, error) 
 		scopeIDHex = signer.ScopeIDToHex(scope)
 
 		order := &signer.OrderForSigning{
-			Salt:          big.NewInt(0),
+			Salt:          saltBig,
 			Maker:         makerAddr,
 			Signer:        common.HexToAddress(signerAddr),
 			Taker:         common.Address{},
