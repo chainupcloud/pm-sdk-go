@@ -2,6 +2,15 @@
 
 本仓所有显著变更记录于此。版本规范遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.1.10
+
+### `pkg/clob` — 暴露 trade snowflake int64 + GetTrades from_id 增量游标（pm-cup2026-liquidity hedge-fill-marking P1）
+
+- `SdkTrade` 新增 `SnowflakeID int64` 字段：`tradeToSDK` 把 wire 上的 ID string（server 端 snowflake decimal）解析为强类型 int64。解析失败保留 0（不返错），由调用方按需降级到旧路径（如 FNV hash）。原 `ID string` 字段保留，向后兼容。
+- `TradeFilter` 新增 `FromID int64` 字段：>0 时 SDK 通过 `RequestEditorFn` 在 `GET /trades` query 末尾追加 `from_id=<n>`，server-side `WHERE id > ?` 增量游标。需要 pm-cup2026 server 同步落 `from_id` query 支持后方能生效；server 未支持时忽略此参数（向后兼容已部署 server）。
+- 实现策略：`from_id` 暂不在 upstream OpenAPI spec（codegen 来自 pm-cup2026），通过 Facade 层 `withFromIDQuery` RequestEditorFn 注入 query string，避免 codegen drift；待 server 端 spec 落 `from_id` 后由 `scripts/codegen.sh` 自动同步入 `GetTradesParams`。
+- 单测覆盖（`pkg/clob/client_test.go`）：tradeToSDK 合法 snowflake 解析、tradeToSDK 非法 ID（保留 0、不返错）、GetTrades 入参 FromID=12345 → 验证 request URL 含 `from_id=12345`、FromID=0 → 验证不拼 from_id。
+
 ## v0.1.6 — 2026-05-08
 
 ### `pkg/clob` — Facade `PlaceOrders` / `CancelOrders` 批量下/撤单（chainupcloud/pm-cup2026-liquidity#389）

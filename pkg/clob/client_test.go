@@ -288,6 +288,80 @@ func TestGetTrades_MissingMaker(t *testing.T) {
 	}
 }
 
+// TestTradeToSDK_SnowflakeID_Valid 验证 server snowflake decimal 字符串解析为强类型 int64。
+func TestTradeToSDK_SnowflakeID_Valid(t *testing.T) {
+	id := "123456789"
+	wire := &Trade{Id: &id}
+	got := tradeToSDK(wire)
+	if got == nil {
+		t.Fatal("tradeToSDK returned nil")
+	}
+	if got.ID != "123456789" {
+		t.Errorf("ID = %q, want 123456789", got.ID)
+	}
+	if got.SnowflakeID != 123456789 {
+		t.Errorf("SnowflakeID = %d, want 123456789", got.SnowflakeID)
+	}
+}
+
+// TestTradeToSDK_SnowflakeID_Invalid 验证非法 ID 不返错、SnowflakeID 保留 0、ID string 透传。
+func TestTradeToSDK_SnowflakeID_Invalid(t *testing.T) {
+	id := "abc"
+	wire := &Trade{Id: &id}
+	got := tradeToSDK(wire)
+	if got == nil {
+		t.Fatal("tradeToSDK returned nil")
+	}
+	if got.ID != "abc" {
+		t.Errorf("ID = %q, want abc", got.ID)
+	}
+	if got.SnowflakeID != 0 {
+		t.Errorf("SnowflakeID = %d, want 0", got.SnowflakeID)
+	}
+}
+
+// TestGetTrades_FromID_Query 验证 TradeFilter.FromID > 0 时 SDK 把 from_id=<n> 拼入 query string。
+func TestGetTrades_FromID_Query(t *testing.T) {
+	var gotFromID string
+	var gotMaker string
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotFromID = r.URL.Query().Get("from_id")
+		gotMaker = r.URL.Query().Get("maker_address")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[],"next_cursor":""}`))
+	})
+	_, _, err := f.GetTrades(context.Background(), TradeFilter{
+		MakerAddress: "0xabc",
+		FromID:       12345,
+	})
+	if err != nil {
+		t.Fatalf("GetTrades: %v", err)
+	}
+	if gotFromID != "12345" {
+		t.Errorf("from_id = %q, want 12345", gotFromID)
+	}
+	if gotMaker != "0xabc" {
+		t.Errorf("maker_address = %q, want 0xabc", gotMaker)
+	}
+}
+
+// TestGetTrades_FromID_Zero_Omitted 验证 FromID==0 时不拼 from_id（向后兼容）。
+func TestGetTrades_FromID_Zero_Omitted(t *testing.T) {
+	var hasFromID bool
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, hasFromID = r.URL.Query()["from_id"]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[],"next_cursor":""}`))
+	})
+	_, _, err := f.GetTrades(context.Background(), TradeFilter{MakerAddress: "0xabc"})
+	if err != nil {
+		t.Fatalf("GetTrades: %v", err)
+	}
+	if hasFromID {
+		t.Error("from_id should not be present when FromID==0")
+	}
+}
+
 func TestCancelOrder_Happy(t *testing.T) {
 	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/order" {
