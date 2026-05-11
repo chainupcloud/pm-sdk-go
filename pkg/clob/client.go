@@ -407,8 +407,16 @@ func (f *Facade) GetTrades(ctx context.Context, filter TradeFilter) ([]SdkTrade,
 		params.NextCursor = strPtr(filter.NextCursor)
 	}
 
+	// from_id 不在 upstream OpenAPI spec（codegen 来自 pm-cup2026 spec），
+	// 通过 RequestEditorFn 在 query string 末尾追加 `from_id=<n>`；server 未支持时忽略
+	// 此参数（向后兼容）。需要 pm-cup2026 server 同步落 from_id 后方能生效。
+	editors := []RequestEditorFn{}
+	if filter.FromID > 0 {
+		editors = append(editors, withFromIDQuery(filter.FromID))
+	}
+
 	op := f.observe("GetTrades", "GET", "/trades")
-	resp, err := f.low.GetTrades(ctx, params)
+	resp, err := f.low.GetTrades(ctx, params, editors...)
 	op.done(resp, err)
 	if err != nil {
 		return nil, "", wrapTransportError(ctx, err)
@@ -656,6 +664,9 @@ func tradeToSDK(t *Trade) *SdkTrade {
 	out := &SdkTrade{Side: mapSideReverse(t.Side)}
 	if t.Id != nil {
 		out.ID = *t.Id
+		// 把 wire 上的 snowflake decimal 字符串解析为强类型 int64。
+		// 解析失败保留 0（不返错）；调用方按需降级到旧路径（如 FNV）。
+		out.SnowflakeID, _ = strconv.ParseInt(*t.Id, 10, 64)
 	}
 	if t.Market != nil {
 		out.MarketID = *t.Market
@@ -697,6 +708,17 @@ func withClientOrderHeader(clientOrder string) RequestEditorFn {
 		if clientOrder != "" {
 			req.Header.Set("X-Client-Order-Id", clientOrder)
 		}
+		return nil
+	}
+}
+
+// withFromIDQuery 把 from_id=<n> 追加到 GET /trades 的 query string。
+// 由 GetTrades 在 filter.FromID > 0 时使用；server 未支持此参数时忽略（向后兼容）。
+func withFromIDQuery(fromID int64) RequestEditorFn {
+	return func(_ context.Context, req *http.Request) error {
+		q := req.URL.Query()
+		q.Set("from_id", strconv.FormatInt(fromID, 10))
+		req.URL.RawQuery = q.Encode()
 		return nil
 	}
 }

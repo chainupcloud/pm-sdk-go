@@ -125,16 +125,21 @@ type Level struct {
 
 // SdkTrade 是成交记录（契约 §4 Trade，由 GetTrades 返回）。
 type SdkTrade struct {
-	ID         string          `json:"id"`
-	MarketID   string          `json:"market_id"`
-	TokenID    string          `json:"token_id"`
-	Side       SdkSide         `json:"side"`
-	Price      decimal.Decimal `json:"price"`
-	Size       decimal.Decimal `json:"size"`
-	MatchTime  time.Time       `json:"match_time"`
-	OrderID    OrderID         `json:"order_id"`
-	TraderSide string          `json:"trader_side"` // MAKER / TAKER（透传）
-	Status     string          `json:"status"`      // 上游 trade status 透传
+	ID string `json:"id"`
+	// SnowflakeID 是 server 端 trade snowflake int64 的强类型派生字段。
+	// SDK 在 tradeToSDK 里把 wire 上的 ID string（snowflake decimal）解析为 int64；
+	// 解析失败时保留 0，由调用方按需降级到旧路径（如 FNV hash）。
+	// 注：本字段是 SDK 解析后的派生值，wire 不直接来自 server 单独字段。
+	SnowflakeID int64           `json:"-"`
+	MarketID    string          `json:"market_id"`
+	TokenID     string          `json:"token_id"`
+	Side        SdkSide         `json:"side"`
+	Price       decimal.Decimal `json:"price"`
+	Size        decimal.Decimal `json:"size"`
+	MatchTime   time.Time       `json:"match_time"`
+	OrderID     OrderID         `json:"order_id"`
+	TraderSide  string          `json:"trader_side"` // MAKER / TAKER（透传）
+	Status      string          `json:"status"`      // 上游 trade status 透传
 }
 
 // OrderFilter 是 ListOrders 查询条件（契约 §4）。
@@ -154,4 +159,8 @@ type TradeFilter struct {
 	Before       *time.Time // 可选：上界（trades 在此之前）
 	After        *time.Time // 可选：下界
 	NextCursor   string     // 分页游标
+	// FromID 可选：server-side WHERE id > ? 增量游标（snowflake int64）。
+	// >0 时 SDK 把 `from_id=<n>` 拼到 query string；server 未支持时忽略此参数
+	// （向后兼容）。需要 pm-cup2026 server 同步落 from_id 支持后方能生效。
+	FromID int64
 }
