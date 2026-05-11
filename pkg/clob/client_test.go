@@ -320,6 +320,50 @@ func TestTradeToSDK_SnowflakeID_Invalid(t *testing.T) {
 	}
 }
 
+// TestTradeToSDK_MatchTime_UnixSeconds 验证 unix epoch 秒字符串可被解析为对应 time.Time（UTC）。
+func TestTradeToSDK_MatchTime_UnixSeconds(t *testing.T) {
+	mt := "1746843261"
+	wire := &Trade{MatchTime: &mt}
+	got := tradeToSDK(wire)
+	if got == nil {
+		t.Fatal("tradeToSDK returned nil")
+	}
+	want := time.Unix(1746843261, 0).UTC()
+	if !got.MatchTime.Equal(want) {
+		t.Errorf("MatchTime = %v, want %v", got.MatchTime, want)
+	}
+	if got.MatchTime.IsZero() {
+		t.Error("MatchTime should not be zero")
+	}
+}
+
+// TestTradeToSDK_MatchTime_RFC3339 验证 RFC3339 字符串仍可被解析（向后兼容）。
+func TestTradeToSDK_MatchTime_RFC3339(t *testing.T) {
+	mt := "2025-05-10T12:34:21Z"
+	wire := &Trade{MatchTime: &mt}
+	got := tradeToSDK(wire)
+	if got == nil {
+		t.Fatal("tradeToSDK returned nil")
+	}
+	want, _ := time.Parse(time.RFC3339, mt)
+	if !got.MatchTime.Equal(want) {
+		t.Errorf("MatchTime = %v, want %v", got.MatchTime, want)
+	}
+}
+
+// TestTradeToSDK_MatchTime_Invalid 验证非法字符串置零，不报错。
+func TestTradeToSDK_MatchTime_Invalid(t *testing.T) {
+	mt := "not-a-time"
+	wire := &Trade{MatchTime: &mt}
+	got := tradeToSDK(wire)
+	if got == nil {
+		t.Fatal("tradeToSDK returned nil")
+	}
+	if !got.MatchTime.IsZero() {
+		t.Errorf("MatchTime = %v, want zero", got.MatchTime)
+	}
+}
+
 // TestGetTrades_FromID_Query 验证 TradeFilter.FromID > 0 时 SDK 把 from_id=<n> 拼入 query string。
 func TestGetTrades_FromID_Query(t *testing.T) {
 	var gotFromID string
@@ -842,9 +886,10 @@ func TestPlaceOrder_PolyGnosisSafe_MissingMaker_Errors(t *testing.T) {
 }
 
 // TestPlaceOrder_PostOnlyPropagated 锁定 OrderReq.PostOnly 三态透传到 wire SendOrder.PostOnly：
-//   nil   → wire 缺省（omitempty，后端默认行为）
-//   true  → wire postOnly=true（后端拒填 maker-taker 即时成交）
-//   false → wire postOnly=false（显式允许立即成交）
+//
+//	nil   → wire 缺省（omitempty，后端默认行为）
+//	true  → wire postOnly=true（后端拒填 maker-taker 即时成交）
+//	false → wire postOnly=false（显式允许立即成交）
 func TestPlaceOrder_PostOnlyPropagated(t *testing.T) {
 	tru := true
 	fls := false
