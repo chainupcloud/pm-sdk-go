@@ -685,8 +685,10 @@ func tradeToSDK(t *Trade) *SdkTrade {
 		}
 	}
 	if t.MatchTime != nil {
-		// 上游发的是 ISO 8601 string；解析失败则置零
-		if ts, err := time.Parse(time.RFC3339, *t.MatchTime); err == nil {
+		// 上游兼容两种格式：unix epoch 秒（当前 server，如 "1746843261"）与 RFC3339（向后兼容）；两者都失败则置零
+		if sec, err := strconv.ParseInt(*t.MatchTime, 10, 64); err == nil {
+			out.MatchTime = time.Unix(sec, 0).UTC()
+		} else if ts, err := time.Parse(time.RFC3339, *t.MatchTime); err == nil {
 			out.MatchTime = ts
 		}
 	}

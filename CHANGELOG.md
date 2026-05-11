@@ -2,6 +2,14 @@
 
 本仓所有显著变更记录于此。版本规范遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.1.11
+
+### `pkg/clob` — `tradeToSDK` 兼容 unix epoch 秒 + RFC3339 解析 `MatchTime`（pm-cup2026-liquidity hedge-fill-marking P3 阻断 fix）
+
+- `tradeToSDK` 解析 `t.MatchTime` 由「仅 RFC3339」改为「先 unix epoch 秒 → 退化 RFC3339 → 都失败置零」三段式。背景：pm-cup2026 server tradingapi/handlers/handlers.go 用 `strconv.FormatInt(t.MatchTime, 10)` 序列化为 unix 秒字符串（如 "1746843261"），原 SDK 用 `time.Parse(time.RFC3339, ...)` 解析必失败、`out.MatchTime` 置零；下游 pm-cup2026-liquidity `hedge_store.UpsertPendingMin / UpsertPending` 把 zero `time.Time` 写入 MySQL `fill_at` TIMESTAMP 列、strict mode 报 `Incorrect datetime value: '0000-00-00'`，整条 hedge-fill-marking 链路阻断。
+- 修复仅一处（`pkg/clob/client.go::tradeToSDK`）：先 `strconv.ParseInt(...)` 试 unix 秒，命中则 `time.Unix(sec, 0).UTC()`；不命中再试 `time.Parse(time.RFC3339, ...)`（保留未来 server 端 migrate 的向前兼容）；都失败保留旧行为置零。
+- 单测覆盖（`pkg/clob/client_test.go`）：`TestTradeToSDK_MatchTime_UnixSeconds`（"1746843261" → 对应 UTC time）/ `TestTradeToSDK_MatchTime_RFC3339`（"2025-05-10T12:34:21Z" → 对应 time）/ `TestTradeToSDK_MatchTime_Invalid`（非法字符串 → 零值、不返错）。
+
 ## v0.1.10
 
 ### `pkg/clob` — 暴露 trade snowflake int64 + GetTrades from_id 增量游标（pm-cup2026-liquidity hedge-fill-marking P1）
