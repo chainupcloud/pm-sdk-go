@@ -566,8 +566,10 @@ func TestPlaceOrder_PMCup26Signer(t *testing.T) {
 	mAmt := big.NewInt(5_500_000)
 	tAmt := big.NewInt(10_000_000)
 
+	// signOne 现在用时间戳生成 salt；从 wire body 读回反向验证
+	wireSalt, _ := new(big.Int).SetString(deref(captured.Order.Salt), 10)
 	order := &pmsigner.OrderForSigning{
-		Salt:          big.NewInt(0),
+		Salt:          wireSalt,
 		Maker:         signerAddr,
 		Signer:        signerAddr,
 		Taker:         common.Address{},
@@ -604,6 +606,14 @@ func TestPlaceOrder_PMCup26Signer(t *testing.T) {
 	if got != signerAddr {
 		t.Errorf("recovered = %s, want %s", got.Hex(), signerAddr.Hex())
 	}
+}
+
+// deref 是本地 *string 解引用 helper，nil → ""。
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // hexDecode 是测试本地 hex helper，避免引入额外依赖。
@@ -697,8 +707,10 @@ func TestPlaceOrder_PolyGnosisSafe_Maker(t *testing.T) {
 	tokenIDBig := new(big.Int).SetUint64(100200300)
 	mAmt := big.NewInt(5_500_000)
 	tAmt := big.NewInt(10_000_000)
+	// signOne 现在用时间戳生成 salt；从 wire body 读回反向验证。
+	wireSalt2, _ := new(big.Int).SetString(deref(captured.Order.Salt), 10)
 	order := &pmsigner.OrderForSigning{
-		Salt:          big.NewInt(0),
+		Salt:          wireSalt2,
 		Maker:         safeAddr,
 		Signer:        signerAddr,
 		Taker:         common.Address{},
