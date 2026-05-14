@@ -2,6 +2,14 @@
 
 本仓所有显著变更记录于此。版本规范遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.1.12
+
+### `pkg/clob` — pm-cup2026 CLOB auth scope header 迁移到 `PRED_SCOPE_ID`
+
+- generated clob client 的 L1 auth scope 参数从 `PolyScopeId` / `POLYSCOPEID` / `POLY_SCOPE_ID` 迁移为 `PredScopeId` / `PREDSCOPEID` / `PRED_SCOPE_ID`，对齐 pm-cup2026 PR #248 的认证 header 前缀迁移。
+- 仅变更自研 CLOB auth header wire 契约；`POLY_GNOSIS_SAFE` / `POLY_PROXY` 等 Polymarket 兼容签名类型枚举保持不变。
+- 单测覆盖 `NewCreateApiKeyRequest` / `NewDeriveApiKeyRequest` / `NewRevokeApiKeyRequest` 均发送 `PRED_SCOPE_ID` 且不再发送旧 `POLY_SCOPE_ID`。
+
 ## v0.1.11
 
 ### `pkg/clob` — `tradeToSDK` 兼容 unix epoch 秒 + RFC3339 解析 `MatchTime`（pm-cup2026-liquidity hedge-fill-marking P3 阻断 fix）

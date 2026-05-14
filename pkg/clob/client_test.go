@@ -127,6 +127,57 @@ func TestPlaceOrder_NoSigner(t *testing.T) {
 	}
 }
 
+func TestAuthScopeParamsUsePredScopeID(t *testing.T) {
+	scope := PredScopeId("0x" + strings.Repeat("11", 32))
+
+	cases := []struct {
+		name string
+		req  *http.Request
+	}{
+		{
+			name: "create",
+			req: func() *http.Request {
+				req, err := NewCreateApiKeyRequest("https://clob.example", &CreateApiKeyParams{PREDSCOPEID: &scope})
+				if err != nil {
+					t.Fatalf("NewCreateApiKeyRequest: %v", err)
+				}
+				return req
+			}(),
+		},
+		{
+			name: "derive",
+			req: func() *http.Request {
+				req, err := NewDeriveApiKeyRequest("https://clob.example", &DeriveApiKeyParams{PREDSCOPEID: &scope})
+				if err != nil {
+					t.Fatalf("NewDeriveApiKeyRequest: %v", err)
+				}
+				return req
+			}(),
+		},
+		{
+			name: "revoke",
+			req: func() *http.Request {
+				req, err := NewRevokeApiKeyRequest("https://clob.example", &RevokeApiKeyParams{PREDSCOPEID: &scope})
+				if err != nil {
+					t.Fatalf("NewRevokeApiKeyRequest: %v", err)
+				}
+				return req
+			}(),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.req.Header.Get("PRED_SCOPE_ID"); got != string(scope) {
+				t.Fatalf("PRED_SCOPE_ID=%q want %q", got, scope)
+			}
+			if got := tc.req.Header.Get("POLY_SCOPE_ID"); got != "" {
+				t.Fatalf("POLY_SCOPE_ID should not be sent, got %q", got)
+			}
+		})
+	}
+}
+
 func TestPlaceOrder_BadAmounts(t *testing.T) {
 	_, f := newTestServer(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("server should not be called for bad amounts")

@@ -26,12 +26,12 @@ import (
 )
 
 const (
-	PolyAddressScopes    = "polyAddress.Scopes"
-	PolyApiKeyScopes     = "polyApiKey.Scopes"
-	PolyNonceScopes      = "polyNonce.Scopes"
-	PolyPassphraseScopes = "polyPassphrase.Scopes"
-	PolySignatureScopes  = "polySignature.Scopes"
-	PolyTimestampScopes  = "polyTimestamp.Scopes"
+	PredAddressScopes    = "predAddress.Scopes"
+	PredApiKeyScopes     = "predApiKey.Scopes"
+	PredNonceScopes      = "predNonce.Scopes"
+	PredPassphraseScopes = "predPassphrase.Scopes"
+	PredSignatureScopes  = "predSignature.Scopes"
+	PredTimestampScopes  = "predTimestamp.Scopes"
 )
 
 // Defines values for OrderSignatureType.
@@ -443,8 +443,8 @@ type TradesResponse struct {
 	NextCursor *string  `json:"next_cursor,omitempty"`
 }
 
-// PolyScopeId defines model for polyScopeId.
-type PolyScopeId = string
+// PredScopeId defines model for predScopeId.
+type PredScopeId = string
 
 // TokenIdQuery defines model for tokenIdQuery.
 type TokenIdQuery = string
@@ -457,20 +457,20 @@ type Unauthorized = ErrorResponse
 
 // RevokeApiKeyParams defines parameters for RevokeApiKey.
 type RevokeApiKeyParams struct {
-	// POLYSCOPEID TENANT scope ID (0x + 64 hex). Optional — empty = no scope binding.
-	POLYSCOPEID *PolyScopeId `json:"POLY_SCOPE_ID,omitempty"`
+	// PREDSCOPEID TENANT scope ID (0x + 64 hex). Optional — empty = no scope binding.
+	PREDSCOPEID *PredScopeId `json:"PRED_SCOPE_ID,omitempty"`
 }
 
 // CreateApiKeyParams defines parameters for CreateApiKey.
 type CreateApiKeyParams struct {
-	// POLYSCOPEID TENANT scope ID (0x + 64 hex). Optional — empty = no scope binding.
-	POLYSCOPEID *PolyScopeId `json:"POLY_SCOPE_ID,omitempty"`
+	// PREDSCOPEID TENANT scope ID (0x + 64 hex). Optional — empty = no scope binding.
+	PREDSCOPEID *PredScopeId `json:"PRED_SCOPE_ID,omitempty"`
 }
 
 // DeriveApiKeyParams defines parameters for DeriveApiKey.
 type DeriveApiKeyParams struct {
-	// POLYSCOPEID TENANT scope ID (0x + 64 hex). Optional — empty = no scope binding.
-	POLYSCOPEID *PolyScopeId `json:"POLY_SCOPE_ID,omitempty"`
+	// PREDSCOPEID TENANT scope ID (0x + 64 hex). Optional — empty = no scope binding.
+	PREDSCOPEID *PredScopeId `json:"PRED_SCOPE_ID,omitempty"`
 }
 
 // GetBookParams defines parameters for GetBook.
@@ -1416,15 +1416,15 @@ func NewRevokeApiKeyRequest(server string, params *RevokeApiKeyParams) (*http.Re
 
 	if params != nil {
 
-		if params.POLYSCOPEID != nil {
+		if params.PREDSCOPEID != nil {
 			var headerParam0 string
 
-			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "POLY_SCOPE_ID", *params.POLYSCOPEID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "PRED_SCOPE_ID", *params.PREDSCOPEID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
 			if err != nil {
 				return nil, err
 			}
 
-			req.Header.Set("POLY_SCOPE_ID", headerParam0)
+			req.Header.Set("PRED_SCOPE_ID", headerParam0)
 		}
 
 	}
@@ -1458,15 +1458,15 @@ func NewCreateApiKeyRequest(server string, params *CreateApiKeyParams) (*http.Re
 
 	if params != nil {
 
-		if params.POLYSCOPEID != nil {
+		if params.PREDSCOPEID != nil {
 			var headerParam0 string
 
-			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "POLY_SCOPE_ID", *params.POLYSCOPEID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "PRED_SCOPE_ID", *params.PREDSCOPEID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
 			if err != nil {
 				return nil, err
 			}
 
-			req.Header.Set("POLY_SCOPE_ID", headerParam0)
+			req.Header.Set("PRED_SCOPE_ID", headerParam0)
 		}
 
 	}
@@ -1500,15 +1500,15 @@ func NewDeriveApiKeyRequest(server string, params *DeriveApiKeyParams) (*http.Re
 
 	if params != nil {
 
-		if params.POLYSCOPEID != nil {
+		if params.PREDSCOPEID != nil {
 			var headerParam0 string
 
-			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "POLY_SCOPE_ID", *params.POLYSCOPEID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "PRED_SCOPE_ID", *params.PREDSCOPEID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
 			if err != nil {
 				return nil, err
 			}
 
-			req.Header.Set("POLY_SCOPE_ID", headerParam0)
+			req.Header.Set("PRED_SCOPE_ID", headerParam0)
 		}
 
 	}
