@@ -16,7 +16,7 @@ import (
 //
 // 与上游 Polymarket 的区别：增加 scopeId (bytes32) 多租户字段。
 const (
-	ctfDomainNameStr    = "Polymarket CTF Exchange"
+	ctfDomainNameStr    = "Prediction Market Protocol"
 	ctfDomainVersionStr = "1"
 )
 

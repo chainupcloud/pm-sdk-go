@@ -16,11 +16,11 @@ import (
 
 // goldenFixture 是 testdata/golden.json 的反序列化形态；字段与生成器一致。
 type goldenFixture struct {
-	Comment   string                  `json:"_comment"`
-	PrivKey   string                  `json:"private_key"`
-	ClobAuth  []goldenClobAuthCase    `json:"clob_auth"`
-	Orders    []goldenOrderCase       `json:"orders"`
-	DomainSep map[string]string       `json:"domain_separators"`
+	Comment   string               `json:"_comment"`
+	PrivKey   string               `json:"private_key"`
+	ClobAuth  []goldenClobAuthCase `json:"clob_auth"`
+	Orders    []goldenOrderCase    `json:"orders"`
+	DomainSep map[string]string    `json:"domain_separators"`
 }
 
 type goldenClobAuthCase struct {
@@ -113,6 +113,29 @@ func TestCTFExchangeDomainSeparator_Golden(t *testing.T) {
 		if gotHex != want {
 			t.Errorf("chain %d ctf domain separator = %s, want %s", chainID, gotHex, want)
 		}
+	}
+}
+
+func TestCTFExchangeDomainSeparator_UsesPredictionMarketProtocolDomain(t *testing.T) {
+	exchange := common.HexToAddress("0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E")
+	chainID := int64(137)
+	nameHash := ethcrypto.Keccak256([]byte("Prediction Market Protocol"))
+	versionHash := ethcrypto.Keccak256([]byte("1"))
+	domainTypeHash := ethcrypto.Keccak256([]byte(
+		"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+	))
+	chainIDBig := new(big.Int).SetInt64(chainID)
+	want := ethcrypto.Keccak256(
+		domainTypeHash,
+		nameHash,
+		versionHash,
+		common.LeftPadBytes(chainIDBig.Bytes(), 32),
+		common.LeftPadBytes(exchange.Bytes(), 32),
+	)
+
+	got := CTFExchangeDomainSeparator(chainID, exchange)
+	if "0x"+hex.EncodeToString(got[:]) != "0x"+hex.EncodeToString(want) {
+		t.Fatalf("ctf order domain separator uses the wrong EIP-712 domain name")
 	}
 }
 

@@ -60,10 +60,10 @@
       "side": 0,
       "signature_type": 0,
       "scope_id_hex": "0x0000000000000000000000000000000000000000000000000000000000000042",
-      "domain_separator": "0x1a573e3617c78403b5b4b892827992f027b03d4eaf570048b8ee8cdd84d151be",
+      "domain_separator": "0x06fcd0921446741e452b7b69320facbc7a3b15ce987362395d37945c70857bf5",
       "struct_hash": "0xfe6599ed052c24197ebe2c53a31f461b26efcf6d0f2e1e339a931618075f36fe",
-      "digest": "0x338fafca7c18f99fe40d719b9f0bad195e50b61f98fbf6d5db328691b6dd5ae1",
-      "signature": "0xc1e7dcf2281005b29a90658b64b8f6d2cd5ab91be71ac29f98636c58fed244b453a03c21a17765ec76a4e4de7148a7ea37a6f98cb958a341557b9e98225070dd01",
+      "digest": "0x8ccddf0e33d1e64257201586b542545a0d562ea19e11afc68996d9bcf36fe610",
+      "signature": "0x9ce18e333eab863df79594d6aef05c540f8a4cceac1962a03cf4a2294286919f040527b6c683d61f5a2cfce7b0d0d468ef88d975ee219aa8d4566e64409e0e4a00",
       "recovered_address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
     },
     {
@@ -83,10 +83,10 @@
       "side": 1,
       "signature_type": 0,
       "scope_id_hex": "",
-      "domain_separator": "0x1a573e3617c78403b5b4b892827992f027b03d4eaf570048b8ee8cdd84d151be",
+      "domain_separator": "0x06fcd0921446741e452b7b69320facbc7a3b15ce987362395d37945c70857bf5",
       "struct_hash": "0x0bd8782e62010d8578544c4fd1302976b07abe5e255f3d0e6a34815df79fb32b",
-      "digest": "0x69cbe542871b11eab9e8d45de4f3f1c795d118322bf084e23df7e10d80bec08d",
-      "signature": "0x83fc89fc4195c11f6cc0b2859b70003ae243db18bc44c06fd1693005b1f3fd4b7880a580be4c81265249ac2cb987dd37613df1a4fe7923324da23f81c98c682d00",
+      "digest": "0xdcfba44467f8a10da1153ed32d8fba6657b48b3ee66f1bb9e1c171233accf2e6",
+      "signature": "0x0700d59e506d7a56effa04ff9175e60314a9076b4dd920f2253178b5ee8b2cde36e17ab7848f8806781aed75e11276939078f3b04d00a9a01a25bcbb0c679b8f00",
       "recovered_address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
     },
     {
@@ -106,17 +106,17 @@
       "side": 0,
       "signature_type": 1,
       "scope_id_hex": "0x0000000000000000000000000000000000000000000000000000000000000001",
-      "domain_separator": "0x506f0c3eab261e301aca08583983b88e97af27d42c30de62810edeafb8a5f156",
+      "domain_separator": "0x48ac92f884d4025a2f461e06ed29ba5575d86846304a3d8b6ec513f551c180d3",
       "struct_hash": "0xb85b3c778d74547bc6e5385e2ed079941eb92622e93cdfcc72f7af9c16508e6a",
-      "digest": "0x81b4d3d88d6d5e3f4cbdaa470273ec75b832f7356a2c33eb3f596d754cb2d68a",
-      "signature": "0x437ac6239e03604e559fef819945c0fcf91930fb10819c2bbaccf44052d79d183a2bfa515b11a5d6541aa1ee5ef96bf176a30efcb1ae2923900ffd52f0bf4daa00",
+      "digest": "0xef366c099ebf01cf41f5b6fd01a225120e04fe3b391d1f11ed625bb0e553fe73",
+      "signature": "0xfb1b4d63b175a0a9e2097df3df9d90ed614962eb48bfab424e6278412280d4ec48210a62fc7b02741de944eae5866f35a9c979e0008e563d2ab69f6d9d746c3900",
       "recovered_address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
     }
   ],
   "domain_separators": {
     "clob_auth_chain_1": "0x1f584a7b35054ab3a4314e4571d9fd37278caa1d79ace8c3a06a9e20fad3fbd3",
     "clob_auth_chain_137": "0xcfc66be2a3b30464cb3b588324101f660c9a205fa76e8e5f83ee16a528e1c4cb",
-    "ctf_exchange_chain_1": "0x506f0c3eab261e301aca08583983b88e97af27d42c30de62810edeafb8a5f156",
-    "ctf_exchange_chain_137": "0x1a573e3617c78403b5b4b892827992f027b03d4eaf570048b8ee8cdd84d151be"
+    "ctf_exchange_chain_1": "0x48ac92f884d4025a2f461e06ed29ba5575d86846304a3d8b6ec513f551c180d3",
+    "ctf_exchange_chain_137": "0x06fcd0921446741e452b7b69320facbc7a3b15ce987362395d37945c70857bf5"
   }
 }

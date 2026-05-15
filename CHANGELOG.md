@@ -2,6 +2,13 @@
 
 本仓所有显著变更记录于此。版本规范遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.1.13
+
+### `pkg/signer` — pm-cup2026 Order EIP-712 domain 对齐合约
+
+- `CTFExchangeDomainSeparator` 的 Order domain name 从 `"Polymarket CTF Exchange"` 改为 `"Prediction Market Protocol"`，对齐 pm-cup2026 `CTFExchange.sol` 和 `clob-service` 验签逻辑。
+- 更新 Order golden fixture 的 domain separator、digest 与签名；新增回归测试锁定 domain name，避免做市服务签出会被 CLOB 拒绝的订单。
+
 ## v0.1.12
 
 ### `pkg/clob` — pm-cup2026 CLOB auth scope header 迁移到 `PRED_SCOPE_ID`
