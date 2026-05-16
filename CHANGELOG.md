@@ -2,6 +2,14 @@
 
 本仓所有显著变更记录于此。版本规范遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.1.14
+
+### `pkg/clob` — `POST /orders/replace` 批量替换订单
+
+- 新增 `Facade.ReplaceOrders(ctx, cancelIDs, reqs)`：一次 HTTP 调用完成做市 tick 的撤旧单 + 下新单，复用现有 `signOne` 签名逻辑，避免与 `PlaceOrder` / `PlaceOrders` 的 EIP-712 Order 结构漂移。
+- 新增 `ReplaceResult` / `ReplaceStoppedAt`：保留 cancel / placement 逐项结果；`not_found` cancel 视为幂等成功；403 / 503 fail-stop 路径尽量解析 envelope 后再返回外层 HTTP 错误，方便调用方按已执行结果补偿。
+- 单测覆盖 happy path 与 `PERSIST_FAILED` fail-stop：确保已完成 cancels / placements 不会在非 2xx 响应下丢失。
+
 ## v0.1.13
 
 ### `pkg/signer` — pm-cup2026 Order EIP-712 domain 对齐合约

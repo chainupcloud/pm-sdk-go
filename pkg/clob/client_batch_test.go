@@ -330,3 +330,96 @@ func TestCancelOrders_EmptyAndZeroID(t *testing.T) {
 		}
 	}
 }
+
+// ---------- ReplaceOrders ----------
+
+func TestReplaceOrders_AllSuccess(t *testing.T) {
+	var received struct {
+		CancelOrderIDs []string    `json:"cancelOrderIDs"`
+		Orders         []SendOrder `json:"orders"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/orders/replace" {
+			t.Errorf("path = %q, want /orders/replace", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &received); err != nil {
+			t.Fatalf("decode replace request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{
+			"cancels":[{"orderID":"old-1","status":"canceled"},{"orderID":"old-2","status":"not_found"}],
+			"placements":[{"index":0,"success":true,"orderID":"new-1","takingAmount":"5000000","makingAmount":"2500000","status":"live","transactionsHashes":[],"tradeIDs":[]}]
+		}`))
+	}))
+	defer srv.Close()
+	f, err := NewFacade(srv.URL, srv.Client(), WithSigner(&mockSigner{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := f.ReplaceOrders(context.Background(),
+		[]OrderID{"old-1", "old-2"},
+		[]OrderReq{batchOrderReq("c-1", SideBuy, "0.50", "10")})
+	if err != nil {
+		t.Fatalf("ReplaceOrders err = %v", err)
+	}
+	if len(received.CancelOrderIDs) != 2 || received.CancelOrderIDs[0] != "old-1" {
+		t.Fatalf("cancel wire = %+v", received.CancelOrderIDs)
+	}
+	if len(received.Orders) != 1 {
+		t.Fatalf("orders wire len = %d, want 1", len(received.Orders))
+	}
+	for i, r := range res.Cancels {
+		if r.Err != nil {
+			t.Fatalf("cancel[%d] err = %v", i, r.Err)
+		}
+	}
+	if len(res.Placements) != 1 || res.Placements[0].Err != nil || res.Placements[0].OrderID != "new-1" {
+		t.Fatalf("placements = %+v", res.Placements)
+	}
+}
+
+func TestReplaceOrders_FailStop503PreservesParsedResults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{
+			"stoppedAt":"place",
+			"errorMsg":"PERSIST_FAILED",
+			"cancels":[{"orderID":"old-1","status":"canceled"}],
+			"placements":[
+				{"index":0,"success":true,"orderID":"new-1","takingAmount":"1","makingAmount":"1","status":"live","transactionsHashes":[],"tradeIDs":[]},
+				{"index":1,"success":false,"errorMsg":"PERSIST_FAILED","orderID":"","takingAmount":"0","makingAmount":"0","status":"","transactionsHashes":[],"tradeIDs":[]}
+			]
+		}`))
+	}))
+	defer srv.Close()
+	f, err := NewFacade(srv.URL, srv.Client(), WithSigner(&mockSigner{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := f.ReplaceOrders(context.Background(),
+		[]OrderID{"old-1"},
+		[]OrderReq{
+			batchOrderReq("c-1", SideBuy, "0.50", "10"),
+			batchOrderReq("c-2", SideBuy, "0.49", "10"),
+		})
+	if err == nil || !errors.Is(err, ErrUpstream) {
+		t.Fatalf("err = %v, want ErrUpstream", err)
+	}
+	if res.StoppedAt != ReplaceStoppedAtPlace || res.ErrorMsg != "PERSIST_FAILED" {
+		t.Fatalf("fail-stop fields = %+v", res)
+	}
+	if res.Cancels[0].Err != nil {
+		t.Fatalf("cancel result lost: %+v", res.Cancels)
+	}
+	if res.Placements[0].OrderID != "new-1" || res.Placements[0].Err != nil {
+		t.Fatalf("placement[0] = %+v", res.Placements[0])
+	}
+	if res.Placements[1].Err == nil || !strings.Contains(res.Placements[1].Err.Error(), "PERSIST_FAILED") {
+		t.Fatalf("placement[1] = %+v", res.Placements[1])
+	}
+}
