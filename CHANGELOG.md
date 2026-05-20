@@ -2,6 +2,26 @@
 
 本仓所有显著变更记录于此。版本规范遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.2.0-rc1（pre-release）
+
+### `pkg/gamma` — Market / Token 暴露上下游 binding 元数据 + 两个新方法（pm-cup2026-liquidity part-1 P1.3.0b）
+
+做市端 part-1 DB 隔离改造（design-doc `db-isolation-rpc-boundary` §3.4）需要做市端经 gamma client 调 pm-cup2026 gamma-service 公开 endpoint 拉取上下游绑定元数据，替代当前跨库直读 `web3_pm.predict_upstream_*_binding` 三表。前置依赖 gamma-service Market response 已扩展这些字段（P1.3.0）。
+
+- `gamma.Market` 新增字段：`EventID` / `Outcomes []string` / `UpstreamType` / `UpstreamMarketExtID` / `UpstreamEventExtID`；`gamma.Token` 新增 `UpstreamTokenExtID`。market 未配置 binding 时这些字段为空字符串 / 空切片。
+- `wireMarket` 同步扩 json tag（`eventId` / `outcomes` / `upstreamType` / `upstreamMarketExtId` / `upstreamEventExtId` / `upstreamTokenExtIds`）；`outcomes` 与 `upstreamTokenExtIds` 是 JSON 数组字符串，沿用 `clobTokenIds` 的二次 unmarshal 惯例。`GetToken` 按 `OutcomeIndex` 从 `upstreamTokenExtIds` 平行数组取上游 token 标识填充 `Token.UpstreamTokenExtID`。
+- `Facade` 新增 `GetMarketByConditionID(ctx, conditionID)`：POST `/markets/information` `{conditionIds:[…]}` 取第一个 Market，空结果返 `ErrNotFound`；用于 fill_subscriber / merge_runner 按 condition_id 反查。
+- `Facade` 新增 `BatchGetMarketsByIDs(ctx, marketIDs)`：POST `/markets/information` `{id:[…]}` 批量拉 market；`id` 上游为数字数组，非数字 id 返 `ErrPrecondition`，空入参返空切片；用于 binding sync 批量预取。
+- 单测覆盖新字段解析、binding 缺失降级、两个新方法 happy / not-found / 入参校验、`parseJSONStringArray` 纯函数。
+
+> 本版本为 pre-release，pm-sdk-go `main` 分支保持 v0.1.x 不动；liquidity 实施分支切到 v0.2.0-rc1，P1.3 全部 merge 后同步发 v0.2.0 正式 tag。
+
+## v0.1.14
+
+### `pkg/clob` — 新增 replace orders facade
+
+- clob 门面新增订单替换能力（`feat(clob): add replace orders facade`）。
+
 ## v0.1.13
 
 ### `pkg/signer` — pm-cup2026 Order EIP-712 domain 对齐合约

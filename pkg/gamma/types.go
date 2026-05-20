@@ -49,6 +49,18 @@ type Market struct {
 	Closed          bool      `json:"closed"`
 	AcceptingOrders bool      `json:"accepting_orders"`
 	EndDate         time.Time `json:"end_date,omitempty"`
+
+	// v0.2.0-rc1 新增：上下游绑定元数据。
+	// 上游 gamma-service Market response（P1.3.0 起）JOIN
+	// predict_upstream_*_binding 三表后暴露这些字段，做市端据此把
+	// 下游标识翻译为上游（Polymarket 等）标识。market 未配置 binding
+	// 时这些字段为空字符串 / 空切片。
+	EventID             string   `json:"event_id,omitempty"`              // 上游 gamma event id
+	Outcomes            []string `json:"outcomes,omitempty"`              // ["Yes","No"]，同序 [YesTokenID, NoTokenID]
+	UpstreamType        string   `json:"upstream_type,omitempty"`         // "polymarket" / "kalshi" / ...
+	UpstreamMarketExtID string   `json:"upstream_market_ext_id,omitempty"` // 上游 market 标识（Polymarket: condition_id）
+	UpstreamEventExtID  string   `json:"upstream_event_ext_id,omitempty"`  // 上游 event 标识（Polymarket: gamma event slug 或 id）
+	// upstream_token_ext_id 是 per-token 的，放 Token 结构里。
 }
 
 // Token 是单个 outcome token（契约 §5）。
@@ -58,6 +70,11 @@ type Token struct {
 	ID           string `json:"id"`
 	MarketID     string `json:"market_id"`
 	OutcomeIndex int    `json:"outcome_index"` // 0=Yes, 1=No
+
+	// v0.2.0-rc1 新增：上游 token 标识（Polymarket: clob token_id uint256 字符串）。
+	// 来源是上游 Market.upstreamTokenExtIds 平行数组按 OutcomeIndex 取下标。
+	// token 未配置 binding 时为空字符串。
+	UpstreamTokenExtID string `json:"upstream_token_ext_id,omitempty"`
 }
 
 // EventFilter 是 ListEvents 查询条件（契约 §5）。
