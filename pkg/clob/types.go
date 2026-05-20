@@ -19,6 +19,14 @@ import (
 // OrderID 是订单全局唯一 ID（来自 clob-service 的 snowflake string）。
 type OrderID string
 
+// ReplaceStoppedAt 标识 ReplaceOrders fail-stop 停在 cancel 还是 place 阶段。
+type ReplaceStoppedAt string
+
+const (
+	ReplaceStoppedAtCancel ReplaceStoppedAt = "cancel"
+	ReplaceStoppedAtPlace  ReplaceStoppedAt = "place"
+)
+
 // SdkSide 是订单方向（契约 §4 Side）。
 type SdkSide string
 
@@ -93,6 +101,18 @@ type OrderReq struct {
 	PostOnly *bool
 }
 
+// ReplaceResult 是 ReplaceOrders 的整体响应。
+//
+// Cancels 与 cancelOrderIDs 同序；not_found 被视为幂等成功（Err=nil）。
+// Placements 与 reqs 同序；单笔业务失败通过 Placements[i].Err 暴露。
+// StoppedAt / ErrorMsg 对应服务端 403/503 fail-stop envelope。
+type ReplaceResult struct {
+	Cancels    []CancelResult
+	Placements []PlaceResult
+	StoppedAt  ReplaceStoppedAt
+	ErrorMsg   string
+}
+
 // SdkOrder 是订单详情响应（契约 §4 Order）。
 type SdkOrder struct {
 	ID          OrderID         `json:"id"`
@@ -112,8 +132,8 @@ type SdkOrder struct {
 // Book 是订单簿快照（契约 §4 Book）。
 type Book struct {
 	TokenID  string    `json:"token_id"`
-	Bids     []Level   `json:"bids"`     // 价从高到低
-	Asks     []Level   `json:"asks"`     // 价从低到高
+	Bids     []Level   `json:"bids"` // 价从高到低
+	Asks     []Level   `json:"asks"` // 价从低到高
 	UpdateAt time.Time `json:"update_at"`
 }
 

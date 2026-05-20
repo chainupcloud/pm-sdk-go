@@ -408,3 +408,220 @@ func TestWrapHTTPError_NilResp(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// ---------- v0.2.0-rc1: upstream binding 字段 + 新方法 ----------
+
+// marketWithUpstream 是带 P1.3.0 新增 upstream binding 字段的 Market wire 样本。
+const marketWithUpstream = `{
+  "id": "2001",
+  "conditionId": "0xcond1",
+  "question": "Will Brazil win the 2026 World Cup?",
+  "slug": "brazil-wc26",
+  "active": true,
+  "closed": false,
+  "acceptingOrders": true,
+  "endDate": "2026-07-19T22:00:00Z",
+  "eventId": "1001",
+  "outcomes": "[\"Yes\",\"No\"]",
+  "clobTokenIds": "[\"100200300\",\"400500600\"]",
+  "upstreamType": "polymarket",
+  "upstreamMarketExtId": "0xpmcond",
+  "upstreamEventExtId": "brazil-wc-2026",
+  "upstreamTokenExtIds": "[\"67yes\",\"89no\"]"
+}`
+
+func TestGetMarket_UpstreamFields(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(marketWithUpstream))
+	})
+
+	m, err := f.GetMarket(context.Background(), "2001")
+	if err != nil {
+		t.Fatalf("GetMarket: %v", err)
+	}
+	if m.EventID != "1001" {
+		t.Errorf("EventID = %q, want 1001", m.EventID)
+	}
+	if m.UpstreamType != "polymarket" {
+		t.Errorf("UpstreamType = %q, want polymarket", m.UpstreamType)
+	}
+	if m.UpstreamMarketExtID != "0xpmcond" {
+		t.Errorf("UpstreamMarketExtID = %q, want 0xpmcond", m.UpstreamMarketExtID)
+	}
+	if m.UpstreamEventExtID != "brazil-wc-2026" {
+		t.Errorf("UpstreamEventExtID = %q, want brazil-wc-2026", m.UpstreamEventExtID)
+	}
+	if len(m.Outcomes) != 2 || m.Outcomes[0] != "Yes" || m.Outcomes[1] != "No" {
+		t.Errorf("Outcomes = %v, want [Yes No]", m.Outcomes)
+	}
+	if len(m.UpstreamTokenExtIDs) != 2 || m.UpstreamTokenExtIDs[0] != "67yes" || m.UpstreamTokenExtIDs[1] != "89no" {
+		t.Errorf("UpstreamTokenExtIDs = %v, want [67yes 89no]", m.UpstreamTokenExtIDs)
+	}
+}
+
+func TestGetMarket_NoUpstreamBinding(t *testing.T) {
+	// market 未配置 binding：upstream 字段缺失 → SDK 字段为空，不报错。
+	market := `{
+      "id": "2001",
+      "conditionId": "0xcond1",
+      "clobTokenIds": "[\"100200300\",\"400500600\"]"
+    }`
+	_, f := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(market))
+	})
+
+	m, err := f.GetMarket(context.Background(), "2001")
+	if err != nil {
+		t.Fatalf("GetMarket: %v", err)
+	}
+	if m.UpstreamType != "" || m.UpstreamMarketExtID != "" || m.EventID != "" {
+		t.Errorf("expected empty upstream fields, got %+v", m)
+	}
+	if m.Outcomes != nil {
+		t.Errorf("Outcomes = %v, want nil", m.Outcomes)
+	}
+	if m.UpstreamTokenExtIDs != nil {
+		t.Errorf("UpstreamTokenExtIDs = %v, want nil", m.UpstreamTokenExtIDs)
+	}
+}
+
+func TestGetToken_UpstreamTokenExtID(t *testing.T) {
+	resp := "[" + marketWithUpstream + "]"
+	_, f := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(resp))
+	})
+
+	yes, err := f.GetToken(context.Background(), "100200300")
+	if err != nil {
+		t.Fatalf("GetToken(yes): %v", err)
+	}
+	if yes.OutcomeIndex != 0 || yes.UpstreamTokenExtID != "67yes" {
+		t.Errorf("yes token = %+v, want OutcomeIndex 0 / UpstreamTokenExtID 67yes", yes)
+	}
+
+	no, err := f.GetToken(context.Background(), "400500600")
+	if err != nil {
+		t.Fatalf("GetToken(no): %v", err)
+	}
+	if no.OutcomeIndex != 1 || no.UpstreamTokenExtID != "89no" {
+		t.Errorf("no token = %+v, want OutcomeIndex 1 / UpstreamTokenExtID 89no", no)
+	}
+}
+
+func TestGetMarketByConditionID_Happy(t *testing.T) {
+	var receivedBody string
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/markets/information" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		receivedBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("[" + marketWithUpstream + "]"))
+	})
+
+	m, err := f.GetMarketByConditionID(context.Background(), "0xcond1")
+	if err != nil {
+		t.Fatalf("GetMarketByConditionID: %v", err)
+	}
+	if m.ID != "2001" || m.ConditionID != "0xcond1" {
+		t.Errorf("market wrong: %+v", m)
+	}
+	if !strings.Contains(receivedBody, `"conditionIds"`) || !strings.Contains(receivedBody, `"0xcond1"`) {
+		t.Errorf("request body missing conditionIds: %s", receivedBody)
+	}
+}
+
+func TestGetMarketByConditionID_EmptyID(t *testing.T) {
+	f, _ := NewFacade("http://unused.example", http.DefaultClient)
+	_, err := f.GetMarketByConditionID(context.Background(), "")
+	if !errors.Is(err, clob.ErrPrecondition) {
+		t.Errorf("err = %v, want ErrPrecondition", err)
+	}
+}
+
+func TestGetMarketByConditionID_NotFound(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	_, err := f.GetMarketByConditionID(context.Background(), "0xmissing")
+	if !errors.Is(err, clob.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestBatchGetMarketsByIDs_Happy(t *testing.T) {
+	var receivedBody string
+	page := "[" + marketWithUpstream + "," +
+		strings.Replace(marketWithUpstream, `"id": "2001"`, `"id": "2002"`, 1) + "]"
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/markets/information" || r.Method != http.MethodPost {
+			t.Errorf("path/method wrong: %s %s", r.Method, r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		receivedBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(page))
+	})
+
+	markets, err := f.BatchGetMarketsByIDs(context.Background(), []string{"2001", "2002"})
+	if err != nil {
+		t.Fatalf("BatchGetMarketsByIDs: %v", err)
+	}
+	if len(markets) != 2 {
+		t.Fatalf("markets len = %d, want 2", len(markets))
+	}
+	if !strings.Contains(receivedBody, `"id"`) || !strings.Contains(receivedBody, "2001") {
+		t.Errorf("request body missing id filter: %s", receivedBody)
+	}
+}
+
+func TestBatchGetMarketsByIDs_Empty(t *testing.T) {
+	f, _ := NewFacade("http://unused.example", http.DefaultClient)
+	markets, err := f.BatchGetMarketsByIDs(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BatchGetMarketsByIDs(nil): %v", err)
+	}
+	if len(markets) != 0 {
+		t.Errorf("markets len = %d, want 0", len(markets))
+	}
+}
+
+func TestBatchGetMarketsByIDs_NonNumericID(t *testing.T) {
+	f, _ := NewFacade("http://unused.example", http.DefaultClient)
+	_, err := f.BatchGetMarketsByIDs(context.Background(), []string{"2001", "not-a-number"})
+	if !errors.Is(err, clob.ErrPrecondition) {
+		t.Errorf("err = %v, want ErrPrecondition", err)
+	}
+}
+
+func TestParseJSONStringArray(t *testing.T) {
+	cases := []struct {
+		name string
+		in   *string
+		want []string
+	}{
+		{"nil", nil, nil},
+		{"empty", strPtr(""), nil},
+		{"invalid", strPtr("xx"), nil},
+		{"two", strPtr(`["a","b"]`), []string{"a", "b"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := parseJSONStringArray(c.in)
+			if len(got) != len(c.want) {
+				t.Fatalf("len = %d, want %d", len(got), len(c.want))
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Errorf("[%d] = %q, want %q", i, got[i], c.want[i])
+				}
+			}
+		})
+	}
+}
