@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/chainupcloud/pm-sdk-go/pkg/clob"
 	"github.com/chainupcloud/pm-sdk-go/pkg/obs"
@@ -187,6 +188,92 @@ func (f *Facade) GetMarket(ctx context.Context, marketID string) (*Market, error
 	return wireMarketToSDK(&wire), nil
 }
 
+// GetMarketByConditionID 按链上 condition_id 反查单个 market（v0.2.0-rc1 新增）。
+//
+// 上游没有 /markets/by-condition 端点；本方法通过
+// POST /markets/information { conditionIds: [conditionID] } 反查，取返回的
+// 第一个 Market。空结果 → 返回 ErrNotFound。
+//
+// 用途：做市端 fill_subscriber 把 condition_id 翻译成下游 market_id（C10），
+// merge_runner 解析上游 condition_id（C11）。
+func (f *Facade) GetMarketByConditionID(ctx context.Context, conditionID string) (*Market, error) {
+	if conditionID == "" {
+		return nil, fmt.Errorf("%w: empty condition id", errPrecondition)
+	}
+	body := PostMarketsInformationJSONRequestBody{
+		"conditionIds": []string{conditionID},
+	}
+	op := f.observe("GetMarketByConditionID", "POST", "/markets/information")
+	resp, err := f.low.PostMarketsInformation(ctx, body)
+	op.done(resp, err)
+	if err != nil {
+		return nil, wrapTransportError(ctx, err)
+	}
+	defer drainBody(resp)
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, wrapHTTPError(resp, respBody)
+	}
+
+	var wires []wireMarket
+	if err := json.Unmarshal(respBody, &wires); err != nil {
+		return nil, fmt.Errorf("%w: decode []Market: %v", errUpstream, err)
+	}
+	if len(wires) == 0 {
+		return nil, fmt.Errorf("%w: market with condition id %s not found", errNotFound, conditionID)
+	}
+	return wireMarketToSDK(&wires[0]), nil
+}
+
+// BatchGetMarketsByIDs 按 market id 批量拉取 market（v0.2.0-rc1 新增）。
+//
+// 通过 POST /markets/information { id: [...] } 一次查多个 market；上游 id
+// 过滤是数字数组，因此 marketIDs 须为数字字符串（与 SDK 其他位置的 string ID
+// 形态一致）。任一非数字 id → 返回 ErrPrecondition。
+//
+// 空入参返回空切片、无错误。返回顺序由上游决定，不保证与入参一致。
+//
+// 用途：做市端 binding sync 的批量预取（cron 全量 refresh / admin 批量场景）。
+func (f *Facade) BatchGetMarketsByIDs(ctx context.Context, marketIDs []string) ([]Market, error) {
+	if len(marketIDs) == 0 {
+		return []Market{}, nil
+	}
+	ids := make([]int64, 0, len(marketIDs))
+	for _, raw := range marketIDs {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("%w: market id %q is not numeric", errPrecondition, raw)
+		}
+		ids = append(ids, id)
+	}
+	body := PostMarketsInformationJSONRequestBody{
+		"id": ids,
+	}
+	op := f.observe("BatchGetMarketsByIDs", "POST", "/markets/information")
+	resp, err := f.low.PostMarketsInformation(ctx, body)
+	op.done(resp, err)
+	if err != nil {
+		return nil, wrapTransportError(ctx, err)
+	}
+	defer drainBody(resp)
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, wrapHTTPError(resp, respBody)
+	}
+
+	var wires []wireMarket
+	if err := json.Unmarshal(respBody, &wires); err != nil {
+		return nil, fmt.Errorf("%w: decode []Market: %v", errUpstream, err)
+	}
+	out := make([]Market, 0, len(wires))
+	for i := range wires {
+		out = append(out, *wireMarketToSDK(&wires[i]))
+	}
+	return out, nil
+}
+
 // GetToken 反查单个 outcome token 所属 market（契约 §5）。
 //
 // 上游 gamma-service 没有 /tokens/{id} 端点；token 信息是 Market 的派生字段
@@ -223,12 +310,28 @@ func (f *Facade) GetToken(ctx context.Context, tokenID string) (*Token, error) {
 		m := wireMarketToSDK(&wires[i])
 		switch tokenID {
 		case m.YesTokenID:
-			return &Token{ID: tokenID, MarketID: m.ID, OutcomeIndex: 0}, nil
+			return &Token{
+				ID: tokenID, MarketID: m.ID, OutcomeIndex: 0,
+				UpstreamTokenExtID: upstreamTokenExtIDAt(&wires[i], 0),
+			}, nil
 		case m.NoTokenID:
-			return &Token{ID: tokenID, MarketID: m.ID, OutcomeIndex: 1}, nil
+			return &Token{
+				ID: tokenID, MarketID: m.ID, OutcomeIndex: 1,
+				UpstreamTokenExtID: upstreamTokenExtIDAt(&wires[i], 1),
+			}, nil
 		}
 	}
 	return nil, fmt.Errorf("%w: token %s not found in any market", errNotFound, tokenID)
+}
+
+// upstreamTokenExtIDAt 从 wireMarket.UpstreamTokenExtIDs 平行数组按 outcomeIndex
+// 取上游 token 标识；数组缺失 / 越界 / 该位置为空时返回空字符串。
+func upstreamTokenExtIDAt(w *wireMarket, outcomeIndex int) string {
+	exts := parseJSONStringArray(w.UpstreamTokenExtIDs)
+	if outcomeIndex < 0 || outcomeIndex >= len(exts) {
+		return ""
+	}
+	return exts[outcomeIndex]
 }
 
 // ---------- wire 类型 + 映射 ----------
@@ -264,6 +367,15 @@ type wireMarket struct {
 	EndDate         *jsonTime `json:"endDate"`
 	// ClobTokenIDs 是 JSON 数组字符串（如 `"[\"123\",\"456\"]"`），需要二次 unmarshal。
 	ClobTokenIDs *string `json:"clobTokenIds"`
+	// v0.2.0-rc1 新增：上游 gamma-service P1.3.0 起暴露的字段。
+	EventID string `json:"eventId"`
+	// Outcomes 与 ClobTokenIDs 同样是 JSON 数组字符串（如 `"[\"Yes\",\"No\"]"`），需要二次 unmarshal。
+	Outcomes            *string `json:"outcomes"`
+	UpstreamType        string  `json:"upstreamType"`
+	UpstreamMarketExtID string  `json:"upstreamMarketExtId"`
+	UpstreamEventExtID  string  `json:"upstreamEventExtId"`
+	// UpstreamTokenExtIDs 是与 ClobTokenIDs / Outcomes 同序的 JSON 数组字符串，需要二次 unmarshal。
+	UpstreamTokenExtIDs *string `json:"upstreamTokenExtIds"`
 }
 
 func wireEventToSDK(w *wireEvent) *Event {
@@ -311,7 +423,14 @@ func wireMarketToSDK(w *wireMarket) *Market {
 	if w == nil {
 		return nil
 	}
-	out := &Market{ID: w.ID, ConditionID: w.ConditionID}
+	out := &Market{
+		ID:                  w.ID,
+		ConditionID:         w.ConditionID,
+		EventID:             w.EventID,
+		UpstreamType:        w.UpstreamType,
+		UpstreamMarketExtID: w.UpstreamMarketExtID,
+		UpstreamEventExtID:  w.UpstreamEventExtID,
+	}
 	if w.Question != nil {
 		out.Question = *w.Question
 	}
@@ -330,16 +449,28 @@ func wireMarketToSDK(w *wireMarket) *Market {
 	if w.EndDate != nil {
 		out.EndDate = w.EndDate.Time
 	}
-	if w.ClobTokenIDs != nil && *w.ClobTokenIDs != "" {
-		var ids []string
-		if err := json.Unmarshal([]byte(*w.ClobTokenIDs), &ids); err == nil {
-			if len(ids) > 0 {
-				out.YesTokenID = ids[0]
-			}
-			if len(ids) > 1 {
-				out.NoTokenID = ids[1]
-			}
+	if ids := parseJSONStringArray(w.ClobTokenIDs); len(ids) > 0 {
+		if len(ids) > 0 {
+			out.YesTokenID = ids[0]
 		}
+		if len(ids) > 1 {
+			out.NoTokenID = ids[1]
+		}
+	}
+	out.Outcomes = parseJSONStringArray(w.Outcomes)
+	out.UpstreamTokenExtIDs = parseJSONStringArray(w.UpstreamTokenExtIDs)
+	return out
+}
+
+// parseJSONStringArray 把 gamma wire 上的 JSON 数组字符串
+// （如 `"[\"a\",\"b\"]"`）解析为 []string；nil / 空 / 非法 JSON 返回 nil。
+func parseJSONStringArray(raw *string) []string {
+	if raw == nil || *raw == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(*raw), &out); err != nil {
+		return nil
 	}
 	return out
 }
