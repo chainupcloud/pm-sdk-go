@@ -135,6 +135,12 @@ func (f *Facade) signOne(ctx context.Context, req OrderReq) (*SendOrder, error) 
 
 	side := mapSide(req.Side)
 	otype := mapOrderType(req.OrderType)
+	if req.TimeInForce != "" {
+		if !req.TimeInForce.Valid() {
+			return nil, fmt.Errorf("%w: invalid TimeInForce %q", ErrPrecondition, req.TimeInForce)
+		}
+		otype = req.TimeInForce
+	}
 
 	expiration := "0"
 	expirationUnix := uint64(0)

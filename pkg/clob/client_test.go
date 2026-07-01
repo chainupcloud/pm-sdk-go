@@ -1005,6 +1005,48 @@ func TestExpirationPropagated(t *testing.T) {
 	}
 }
 
+func TestTimeInForceGTDPropagated(t *testing.T) {
+	exp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var captured SendOrder
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		_, _ = w.Write([]byte(`{"orderID":"o1"}`))
+	})
+	_, err := f.PlaceOrder(context.Background(), OrderReq{
+		MarketID: "m", TokenID: "t",
+		Side: SideSell, OrderType: OrderTypeLimit,
+		Price: decimal.NewFromInt(1), Size: decimal.NewFromInt(1),
+		TimeInForce: GTD,
+		Expiration:  &exp,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captured.OrderType == nil || *captured.OrderType != GTD {
+		t.Errorf("OrderType upstream = %v, want GTD", captured.OrderType)
+	}
+	if captured.Order.Expiration == nil ||
+		*captured.Order.Expiration != "1767225600" {
+		t.Errorf("Expiration upstream = %v", captured.Order.Expiration)
+	}
+}
+
+func TestTimeInForceInvalidRejected(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	_, err := f.PlaceOrder(context.Background(), OrderReq{
+		MarketID: "m", TokenID: "t",
+		Side: SideBuy, OrderType: OrderTypeLimit,
+		Price: decimal.NewFromInt(1), Size: decimal.NewFromInt(1),
+		TimeInForce: OrderType("BAD"),
+	})
+	if !errors.Is(err, ErrPrecondition) {
+		t.Fatalf("err = %v, want ErrPrecondition", err)
+	}
+}
+
 // TestComputeAmounts_BaseUnits 锁定 issue #9 的 6-decimal scale 行为：
 // BUY 时 makerAmount = price*size*10^6 (USDC raw)，takerAmount = size*10^6 (token raw)；
 // SELL 反之。fractional bits 超过 6 位的 floor truncate。

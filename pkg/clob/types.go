@@ -73,6 +73,10 @@ type OrderReq struct {
 	Side SdkSide
 	// OrderType 订单类型。
 	OrderType SdkOrderType
+	// TimeInForce 可选的 wire orderType（GTC/GTD/FOK/FAK）。
+	// 空值时沿用 OrderType 的默认映射：LIMIT -> GTC，MARKET -> FAK。
+	// 需要 GTD 限价单时，调用方应设置 TimeInForce=GTD 并同时设置 Expiration。
+	TimeInForce OrderType
 	// Price 限价（市价单填上限价；以 USDC 计价）。
 	Price decimal.Decimal
 	// Size 数量（以 token 计）。
