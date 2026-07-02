@@ -420,6 +420,122 @@ func TestSubscribeOrders_HappyPath(t *testing.T) {
 	}
 }
 
+// TestSubscribeOrders_EnvelopeForm 用真实 clob-service 下发的 envelope 形态 order 帧
+// 验证解析：payload 嵌在 data 对象、status 为小写短串、无 size_matched / timestamp 字段。
+//
+// 帧样例对照 pm-cup2026 origin/dev services/clob-service：
+//   - wsservice.UserEvent{event_type / owner / condition_id / data}
+//   - match_dispatcher.pushOrderEvent（live：id/status/asset_id/side/price/type/lazy/original_size）
+//   - match_dispatcher.pushCancelEvents（仅 id/status；status 有 cancelled / self_trade /
+//     ORDER_STATUS_SYSTEM_CLEARED 三种）
+func TestSubscribeOrders_EnvelopeForm(t *testing.T) {
+	t.Parallel()
+
+	frames := []map[string]any{
+		{ // live 挂单（pushOrderEvent）
+			"event_type":   "order",
+			"owner":        "owner-uuid",
+			"condition_id": "0xcid",
+			"data": map[string]string{
+				"id":            "0xlive",
+				"status":        "live",
+				"asset_id":      "100",
+				"side":          "BUY",
+				"price":         "0.650000",
+				"type":          "GTC",
+				"lazy":          "false",
+				"original_size": "25.5",
+			},
+		},
+		{ // 完全成交（pushOrderEvent 注释 live/matched/cancelled）
+			"event_type":   "order",
+			"owner":        "owner-uuid",
+			"condition_id": "0xcid",
+			"data": map[string]string{
+				"id":       "0xmatch",
+				"status":   "matched",
+				"asset_id": "100",
+				"side":     "BUY",
+				"price":    "0.650000",
+				"type":     "GTC",
+				"lazy":     "false",
+			},
+		},
+		{ // 用户撤单（pushCancelEvents 默认 status）
+			"event_type":   "order",
+			"owner":        "owner-uuid",
+			"condition_id": "0xcid",
+			"data":         map[string]string{"id": "0xcxl", "status": "cancelled"},
+		},
+		{ // 系统清理撤单（pushCancelEvents，status 为大写长枚举）
+			"event_type":   "order",
+			"owner":        "owner-uuid",
+			"condition_id": "0xcid",
+			"data":         map[string]string{"id": "0xsys", "status": "ORDER_STATUS_SYSTEM_CLEARED"},
+		},
+	}
+
+	srv, wsURL := startMockWS(t, mockServerOpts{
+		onConn: func(ctx context.Context, c *websocket.Conn, reqs <-chan json.RawMessage) {
+			select {
+			case <-reqs: // 等订阅
+			case <-ctx.Done():
+				return
+			}
+			for _, fr := range frames {
+				writeMsg(t, c, fr)
+			}
+			<-ctx.Done()
+		},
+	})
+	defer srv.Close()
+
+	f, err := NewFacade(wsURL,
+		WithUserAuth(UserAuth{APIKey: "k", Passphrase: "p"}),
+		withJitter(noJitter),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	ch, err := f.SubscribeOrders(ctx, "0xcid")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []struct {
+		orderID OrderID
+		status  clob.SdkOrderStatus
+	}{
+		{"0xlive", clob.OrderStatusOpen},
+		{"0xmatch", clob.OrderStatusFilled},
+		{"0xcxl", clob.OrderStatusCancelled},
+		{"0xsys", clob.OrderStatusCancelled},
+	}
+	for i, w := range want {
+		select {
+		case got := <-ch:
+			if got.OrderID != w.orderID {
+				t.Errorf("frame %d: order id = %q, want %q", i, got.OrderID, w.orderID)
+			}
+			if got.Status != w.status {
+				t.Errorf("frame %d: status = %q, want %q", i, got.Status, w.status)
+			}
+			if !got.Filled.IsZero() {
+				t.Errorf("frame %d: filled = %s, want 0（envelope 无 size_matched）", i, got.Filled)
+			}
+			// envelope 帧无 timestamp 字段，Time 应回落 SDK 收帧时间而非 1970 epoch
+			if got.Time.Year() < 2000 {
+				t.Errorf("frame %d: time = %s, want近似当前时间", i, got.Time)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting order event %d", i)
+		}
+	}
+}
+
 func TestSubscribeOrders_RequiresAuth(t *testing.T) {
 	t.Parallel()
 
@@ -646,7 +762,13 @@ func TestMapOrderStatus(t *testing.T) {
 		"ORDER_STATUS_CANCELED":                 clob.OrderStatusCancelled,
 		"ORDER_STATUS_CANCELED_MARKET_RESOLVED": clob.OrderStatusCancelled,
 		"ORDER_STATUS_INVALID":                  clob.OrderStatusRejected,
+		"ORDER_STATUS_SYSTEM_CLEARED":           clob.OrderStatusCancelled,
 		"WHATEVER":                              clob.SdkOrderStatus("WHATEVER"),
+		// clob-service 实际推送的小写短串（match_dispatcher pushOrderEvent / pushCancelEvents）
+		"live":       clob.OrderStatusOpen,
+		"matched":    clob.OrderStatusFilled,
+		"cancelled":  clob.OrderStatusCancelled,
+		"self_trade": clob.OrderStatusCancelled,
 	}
 	for in, want := range cases {
 		if got := mapOrderStatus(in); got != want {
