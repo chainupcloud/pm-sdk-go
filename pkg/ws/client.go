@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -465,18 +466,13 @@ func (f *Facade) readUserFrames(ctx context.Context, conn *websocket.Conn, st *u
 		}
 		switch env.EventType {
 		case "order":
-			// 与原实现一致：order 事件按平铺字段解析整帧
-			var ev wireOrderEvent
-			if err := json.Unmarshal(data, &ev); err != nil {
+			up, ok := parseOrderFrame(data, env.Data)
+			if !ok {
 				continue
 			}
-			up := OrderUpdate{
-				OrderID: OrderID(ev.ID),
-				Status:  mapOrderStatus(ev.Status),
-				Time:    time.Unix(0, int64(ev.Timestamp)*int64(time.Millisecond)),
-			}
-			if d, err := decimal.NewFromString(ev.SizeMatched); err == nil {
-				up.Filled = d
+			if up.Time.IsZero() {
+				// envelope 形态 payload 无 timestamp 字段，回落 SDK 收帧时间
+				up.Time = f.nowFn()
 			}
 			if !st.dispatchOrder(ctx, up) {
 				return
@@ -492,6 +488,33 @@ func (f *Facade) readUserFrames(ctx context.Context, conn *websocket.Conn, st *u
 			// 其他事件类型跳过（与原实现丢弃非 order 帧一致）
 		}
 	}
+}
+
+// parseOrderFrame 解析 order 帧 payload。与 parseTradeFrame 同模式双形态兼容：
+// clob-service 实际以 envelope 形态下发（payload 嵌在 data 对象、status 为小写短串、
+// 无 size_matched / timestamp 字段），asyncapi 文档（对齐 Polymarket）为平铺大写形态；
+// envData 是 JSON object 时取 envData，否则按平铺解析整帧。
+// Time 仅在 payload 带 timestamp 时填充，缺省由调用方回落 SDK 收帧时间。
+func parseOrderFrame(frame []byte, envData json.RawMessage) (OrderUpdate, bool) {
+	payload := frame
+	if isJSONObject(envData) {
+		payload = envData
+	}
+	var ev wireOrderEvent
+	if err := json.Unmarshal(payload, &ev); err != nil {
+		return OrderUpdate{}, false
+	}
+	up := OrderUpdate{
+		OrderID: OrderID(ev.ID),
+		Status:  mapOrderStatus(ev.Status),
+	}
+	if d, err := decimal.NewFromString(ev.SizeMatched); err == nil {
+		up.Filled = d
+	}
+	if ev.Timestamp != 0 {
+		up.Time = time.Unix(0, int64(ev.Timestamp)*int64(time.Millisecond))
+	}
+	return up, true
 }
 
 // parseTradeFrame 解析 trade 帧 payload。clob-service 实际以 envelope 形态下发
@@ -790,15 +813,27 @@ func lvlFromWire(w wireOrderLvl) clob.Level {
 	return out
 }
 
+// mapOrderStatus 把上游 wire status 归一为 SDK SdkOrderStatus。
+//
+// 上游有两种形态（clob-service）：
+//   - asyncapi 文档 / OpenOrders REST：大写长枚举 ORDER_STATUS_LIVE / _MATCHED /
+//     _CANCELED / _CANCELED_MARKET_RESOLVED / _SYSTEM_CLEARED / _INVALID
+//   - /ws/user 实际推送（match_dispatcher）：小写短串 live / matched / cancelled /
+//     self_trade
+//
+// 归一规则：大写化 + 去 ORDER_STATUS_ 前缀后映射；撤单类（含 self_trade 自成交
+// 防护撤单、system_cleared 市场生命周期清理）统一 CANCELLED；未知值原样透传
+// （保持既有对外约定）。
 func mapOrderStatus(s string) clob.SdkOrderStatus {
-	switch s {
-	case "ORDER_STATUS_LIVE":
+	key := strings.TrimPrefix(strings.ToUpper(s), "ORDER_STATUS_")
+	switch key {
+	case "LIVE":
 		return clob.OrderStatusOpen
-	case "ORDER_STATUS_MATCHED":
+	case "MATCHED":
 		return clob.OrderStatusFilled
-	case "ORDER_STATUS_CANCELED", "ORDER_STATUS_CANCELED_MARKET_RESOLVED":
+	case "CANCELED", "CANCELLED", "CANCELED_MARKET_RESOLVED", "SELF_TRADE", "SYSTEM_CLEARED":
 		return clob.OrderStatusCancelled
-	case "ORDER_STATUS_INVALID":
+	case "INVALID":
 		return clob.OrderStatusRejected
 	default:
 		return clob.SdkOrderStatus(s)

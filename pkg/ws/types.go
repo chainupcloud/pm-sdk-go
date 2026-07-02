@@ -67,11 +67,13 @@ type BookUpdate struct {
 
 // OrderUpdate 是用户频道事件（契约 §6 OrderUpdate）。
 //
-// 字段映射（asyncapi-user.json `order` / `trade`）：
+// 字段映射（envelope data 内或平铺，见 wireUserEnvelope）：
 //
 //	OrderID ← order.id          (订单 hash)
-//	Status  ← order.status      (ORDER_STATUS_* → SDK SdkOrderStatus)
-//	Filled  ← order.size_matched
+//	Status  ← order.status      (大写 ORDER_STATUS_* 或小写 live/matched/cancelled，
+//	                             统一归一为 SDK SdkOrderStatus，见 mapOrderStatus)
+//	Filled  ← order.size_matched (envelope 形态无此字段，保持零值)
+//	Time    ← order.timestamp    (envelope 形态无此字段，回落 SDK 收帧时间)
 //
 // 上游 trade 事件不通过 OrderUpdate 暴露，走 [Facade.SubscribeTrades]（TradeUpdate）；
 // 逐笔成交明细也可走 GetTrades REST。
@@ -159,7 +161,9 @@ type wireOrderLvl struct {
 	Size  string `json:"size"`
 }
 
-// wireOrderEvent 对应上游用户频道 `order` event。
+// wireOrderEvent 对应上游用户频道 `order` 事件 payload（envelope data 内或平铺）。
+// envelope 形态（clob-service 实际推送）仅带 id/status/asset_id/side/price/type 等
+// 子集（撤单帧只有 id/status），其余字段按可缺省处理。
 type wireOrderEvent struct {
 	EventType    string          `json:"event_type"`
 	Type         string          `json:"type"` // PLACEMENT / UPDATE / CANCELLATION
@@ -180,10 +184,10 @@ type wireOrderEvent struct {
 //
 // clob-service 实际下发 envelope 形态（wsservice.UserEvent）：
 //
-//	{"event_type":"trade","owner":"...","condition_id":"...","data":{...}}
+//	{"event_type":"order"|"trade","owner":"...","condition_id":"...","data":{...}}
 //
 // 而 asyncapi-user.json 文档（对齐 Polymarket）描述的是平铺字段形态；
-// trade 解析两种都兼容（data 为 JSON object 时取 data，否则整帧平铺解析）。
+// order / trade 解析两种都兼容（data 为 JSON object 时取 data，否则整帧平铺解析）。
 type wireUserEnvelope struct {
 	EventType string          `json:"event_type"`
 	Data      json.RawMessage `json:"data"`
