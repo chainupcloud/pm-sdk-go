@@ -1,6 +1,7 @@
 // Package ws 提供 pm-cup2026 WebSocket 行情 / 订单订阅客户端（契约 §6）。
 //
-// 入口：[NewFacade] → *Facade.SubscribeBook / *Facade.SubscribeOrders。
+// 入口：[NewFacade] → *Facade.SubscribeBook / *Facade.SubscribeOrders /
+// *Facade.SubscribeTrades（同 userID 的 order 与 trade 共用一条 /ws/user 连接）。
 //
 // 重连语义：连接断开后指数退避重连（1s → 2s → 4s → 8s → 16s → 30s 封顶 +
 // 0-500ms jitter）；重连成功后向 channel 推一个 Type=RESET 事件，消费方应清缓存

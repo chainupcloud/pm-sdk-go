@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"encoding/json"
 	"strconv"
 	"time"
 
@@ -72,12 +73,49 @@ type BookUpdate struct {
 //	Status  ← order.status      (ORDER_STATUS_* → SDK SdkOrderStatus)
 //	Filled  ← order.size_matched
 //
-// 上游 trade 事件不暴露给 OrderUpdate；消费方需要逐笔成交走 GetTrades REST。
+// 上游 trade 事件不通过 OrderUpdate 暴露，走 [Facade.SubscribeTrades]（TradeUpdate）；
+// 逐笔成交明细也可走 GetTrades REST。
 type OrderUpdate struct {
 	OrderID OrderID
 	Status  clob.SdkOrderStatus
 	Filled  decimal.Decimal
 	Time    time.Time
+}
+
+// TradeUpdate 是用户频道 trade 事件（[Facade.SubscribeTrades]）。
+//
+// 上游同一 event_type="trade" 有两侧 payload（clob-service dispatch）：
+//   - match 侧（撮合瞬间）：Status 为短串 "MATCHED"，带 order_id；
+//     price / size 为人类可读单位（如 "0.55" / "100"）
+//   - settle 侧（结算终态）：Status 为长串枚举 TRADE_STATUS_CONFIRMED /
+//     TRADE_STATUS_FAILED 等，无 order_id；size / fee 为最小单位（×10^6）、
+//     price 为 DECIMAL 字符串（如 "0.550000"）；tx_hash 仅 CONFIRMED、error 仅 FAILED
+//
+// SDK 原样透传不做归一：Status 保留原始字符串（消费方按 strings.Contains 匹配
+// "CONFIRMED" / "FAILED"），Size / Fee 不做单位换算（两侧单位不同，见上）。
+type TradeUpdate struct {
+	// TradeID 即 trade id（snowflake decimal 字符串）。
+	TradeID string
+	// Status 原始状态串：MATCHED（match 侧短串）或 TRADE_STATUS_*（settle 侧长串）。
+	Status string
+	// AssetID 即 token id（本账号视角一侧）。
+	AssetID string
+	// Side 本账号成交方向（BUY / SELL）。
+	Side clob.SdkSide
+	// Price 成交价（两侧均为人类可读概率价）。
+	Price decimal.Decimal
+	// Size 成交量；match 侧人类可读、settle 侧 ×10^6 最小单位（SDK 不换算）。
+	Size decimal.Decimal
+	// Fee 手续费（仅 settle 侧，×10^6 最小单位）。
+	Fee decimal.Decimal
+	// TxHash 链上交易 hash（仅 settle CONFIRMED）。
+	TxHash string
+	// Error 失败原因（仅 settle FAILED）。
+	Error string
+	// OrderID 本账号对应订单（仅 match 侧；settle 侧为空）。
+	OrderID OrderID
+	// Time SDK 收到事件的本地时间（上游 trade 帧无稳定 timestamp 字段）。
+	Time time.Time
 }
 
 // OrderID 是订单 ID（契约 §6 与 §4 共用类型；alias 到 clob.OrderID 避免循环依赖）。
@@ -136,6 +174,51 @@ type wireOrderEvent struct {
 	Status       string          `json:"status"` // ORDER_STATUS_*
 	OrderType    string          `json:"order_type"`
 	Timestamp    wireTimestampMs `json:"timestamp"`
+}
+
+// wireUserEnvelope 用于嗅探用户频道帧的事件类型与 data 包裹层。
+//
+// clob-service 实际下发 envelope 形态（wsservice.UserEvent）：
+//
+//	{"event_type":"trade","owner":"...","condition_id":"...","data":{...}}
+//
+// 而 asyncapi-user.json 文档（对齐 Polymarket）描述的是平铺字段形态；
+// trade 解析两种都兼容（data 为 JSON object 时取 data，否则整帧平铺解析）。
+type wireUserEnvelope struct {
+	EventType string          `json:"event_type"`
+	Data      json.RawMessage `json:"data"`
+}
+
+// wireTradeEvent 对应用户频道 `trade` 事件 payload（envelope data 内或平铺）。
+// match 侧与 settle 侧字段集不同（见 TradeUpdate 注释），全部按可缺省处理。
+type wireTradeEvent struct {
+	ID      string      `json:"id"`
+	Status  string      `json:"status"`
+	AssetID string      `json:"asset_id"`
+	Side    string      `json:"side"`
+	Price   wireDecimal `json:"price"`
+	Size    wireDecimal `json:"size"`
+	Fee     wireDecimal `json:"fee"`
+	TxHash  string      `json:"tx_hash"`
+	Error   string      `json:"error"`
+	OrderID string      `json:"order_id"`
+}
+
+// wireDecimal 容忍 number 与 quoted string 两种 wire 形态，保存原始字面量
+// （envelope 形态数值全是 string，平铺文档形态可能是 number）。
+type wireDecimal string
+
+// UnmarshalJSON 容忍 number 或 quoted string 两种 wire 形态。
+func (d *wireDecimal) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		return nil
+	}
+	if b[0] == '"' {
+		*d = wireDecimal(b[1 : len(b)-1])
+		return nil
+	}
+	*d = wireDecimal(b)
+	return nil
 }
 
 // wireTimestampMs 容忍上游 int 与 string 两种 timestamp 形态（asyncapi 标 integer，
