@@ -42,12 +42,18 @@ type Facade struct {
 	// jitterFn 返回 0-500ms 抖动；测试可注入固定 0。
 	jitterFn func() time.Duration
 
-	// userAuth 是用户频道凭证；nil 时 SubscribeOrders 返回 ErrSign。
+	// userAuth 是用户频道凭证；nil 时 SubscribeOrders / SubscribeTrades 返回 ErrSign。
 	userAuth *UserAuth
 
 	// logger / metrics 由 WithLogger / WithMetrics 注入；默认 Nop 实现。
 	logger  obs.Logger
 	metrics obs.Metrics
+
+	// userMu 保护 userStreams。同一 userID（markets 过滤键）的
+	// SubscribeOrders / SubscribeTrades 共用一条 /ws/user 连接：
+	// 上游用户频道无事件类型过滤，一条连接天然双投递 order + trade。
+	userMu      sync.Mutex
+	userStreams map[string]*userStream
 }
 
 // FacadeOption 是 Facade 构造选项。
@@ -106,6 +112,7 @@ func NewFacade(wsURL string, opts ...FacadeOption) (*Facade, error) {
 		jitterFn:     defaultJitter,
 		logger:       obs.NopLogger{},
 		metrics:      obs.NopMetrics{},
+		userStreams:  map[string]*userStream{},
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -153,6 +160,9 @@ func (f *Facade) SubscribeBook(ctx context.Context, tokenIDs []string) (<-chan B
 // 用户频道按 markets 数组过滤，单 condition_id 即一个市场。空字符串等价订阅所有 market。
 //
 // 必须 WithUserAuth 注入 apiKey + passphrase；缺失返回 ErrSign。
+//
+// 同一 userID 的 SubscribeOrders / SubscribeTrades 共用一条 /ws/user 连接
+// （上游同连接双投递 order + trade 事件，不开第二条连接）。
 func (f *Facade) SubscribeOrders(ctx context.Context, userID string) (<-chan OrderUpdate, error) {
 	if f.wsURL == "" {
 		return nil, fmt.Errorf("%w: ws endpoint not configured", clob.ErrPrecondition)
@@ -160,12 +170,29 @@ func (f *Facade) SubscribeOrders(ctx context.Context, userID string) (<-chan Ord
 	if f.userAuth == nil {
 		return nil, fmt.Errorf("%w: SubscribeOrders requires WithUserAuth", clob.ErrSign)
 	}
-	markets := []string{}
-	if userID != "" {
-		markets = []string{userID}
-	}
 	out := make(chan OrderUpdate, 64)
-	go f.runOrderLoop(ctx, joinPath(f.wsURL, "/ws/user"), markets, out)
+	f.attachUserSub(ctx, userID, &userSubscriber{ctx: ctx, orderCh: out})
+	return out, nil
+}
+
+// SubscribeTrades 订阅用户频道 trade 事件（撮合 MATCHED + 结算
+// TRADE_STATUS_CONFIRMED / TRADE_STATUS_FAILED，见 TradeUpdate）。
+//
+// 参数与 channel 语义（userID 过滤、buffer 64、ctx 取消后关闭、断线指数退避
+// 重连静默续订）与 SubscribeOrders 对齐；同一 userID 的两者共用一条连接。
+//
+// 与 SubscribeOrders 的差异：trade channel 满时该事件被丢弃（记 warn 日志），
+// 不阻塞共享连接上的 order 投递。消费方应把 trade 事件当触发信号，以 REST
+// GetTrades 为事实源。
+func (f *Facade) SubscribeTrades(ctx context.Context, userID string) (<-chan TradeUpdate, error) {
+	if f.wsURL == "" {
+		return nil, fmt.Errorf("%w: ws endpoint not configured", clob.ErrPrecondition)
+	}
+	if f.userAuth == nil {
+		return nil, fmt.Errorf("%w: SubscribeTrades requires WithUserAuth", clob.ErrSign)
+	}
+	out := make(chan TradeUpdate, 64)
+	f.attachUserSub(ctx, userID, &userSubscriber{ctx: ctx, tradeCh: out})
 	return out, nil
 }
 
@@ -283,11 +310,85 @@ func (f *Facade) readBookFrames(ctx context.Context, conn *websocket.Conn, g *se
 	}
 }
 
-// ---------- order loop ----------
+// ---------- user loop（order + trade 共用一条 /ws/user 连接）----------
 
-func (f *Facade) runOrderLoop(ctx context.Context, url string, markets []string, out chan<- OrderUpdate) {
-	defer close(out)
+// userStream 是同一 userID 下 /ws/user 连接的共享体：一条连接双投递 order +
+// trade 事件，SubscribeOrders / SubscribeTrades 的订阅者都挂在这里。
+type userStream struct {
+	cancel context.CancelFunc // 停 runUserLoop（最后一个订阅者退出时调用）
 
+	mu   sync.Mutex // 保护 subs；dispatch 与 close(channel) 都在锁内，避免 send-on-closed
+	subs []*userSubscriber
+}
+
+// userSubscriber 是单次 SubscribeOrders / SubscribeTrades 调用的订阅登记。
+type userSubscriber struct {
+	ctx     context.Context
+	orderCh chan OrderUpdate // nil = 未订 order
+	tradeCh chan TradeUpdate // nil = 未订 trade
+}
+
+// attachUserSub 把订阅者挂到 userID 对应的共享 stream（不存在则建 stream 并起
+// connect-loop），并在订阅者 ctx 结束后摘除、关闭其 channel；最后一个订阅者
+// 退出时停掉共享 loop。
+func (f *Facade) attachUserSub(ctx context.Context, userID string, sub *userSubscriber) {
+	f.userMu.Lock()
+	st, ok := f.userStreams[userID]
+	if !ok {
+		loopCtx, cancel := context.WithCancel(context.Background())
+		st = &userStream{cancel: cancel}
+		f.userStreams[userID] = st
+		markets := []string{}
+		if userID != "" {
+			markets = []string{userID}
+		}
+		go f.runUserLoop(loopCtx, joinPath(f.wsURL, "/ws/user"), markets, st)
+	}
+	st.mu.Lock()
+	st.subs = append(st.subs, sub)
+	st.mu.Unlock()
+	f.userMu.Unlock()
+
+	go func() {
+		<-ctx.Done()
+		f.detachUserSub(userID, st, sub)
+	}()
+}
+
+func (f *Facade) detachUserSub(userID string, st *userStream, sub *userSubscriber) {
+	st.mu.Lock()
+	for i, s := range st.subs {
+		if s == sub {
+			st.subs = append(st.subs[:i], st.subs[i+1:]...)
+			break
+		}
+	}
+	if sub.orderCh != nil {
+		close(sub.orderCh)
+	}
+	if sub.tradeCh != nil {
+		close(sub.tradeCh)
+	}
+	empty := len(st.subs) == 0
+	st.mu.Unlock()
+	if !empty {
+		return
+	}
+	// 最后一个订阅者退出：停 loop 并摘掉注册表项。期间可能有新订阅者 attach
+	// 进同一 stream（attach 全程持 userMu），锁内再核一次防误停。
+	f.userMu.Lock()
+	st.mu.Lock()
+	if len(st.subs) == 0 {
+		st.cancel()
+		if f.userStreams[userID] == st {
+			delete(f.userStreams, userID)
+		}
+	}
+	st.mu.Unlock()
+	f.userMu.Unlock()
+}
+
+func (f *Facade) runUserLoop(ctx context.Context, url string, markets []string, st *userStream) {
 	disconnect := 0
 	for {
 		if ctx.Err() != nil {
@@ -330,7 +431,7 @@ func (f *Facade) runOrderLoop(ctx context.Context, url string, markets []string,
 			continue
 		}
 
-		f.readOrderFrames(ctx, conn, out)
+		f.readUserFrames(ctx, conn, st)
 
 		_ = conn.Close(websocket.StatusNormalClosure, "loop end")
 		f.logger.Infow("ws disconnected", "channel", "user")
@@ -341,7 +442,9 @@ func (f *Facade) runOrderLoop(ctx context.Context, url string, markets []string,
 	}
 }
 
-func (f *Facade) readOrderFrames(ctx context.Context, conn *websocket.Conn, out chan<- OrderUpdate) {
+// readUserFrames 读用户频道帧并按 event_type 分发：order 走阻塞投递（行为与
+// 原 readOrderFrames 一致），trade 走非阻塞投递，其余事件类型跳过。
+func (f *Facade) readUserFrames(ctx context.Context, conn *websocket.Conn, st *userStream) {
 	pingCtx, cancelPing := context.WithCancel(ctx)
 	defer cancelPing()
 	go f.runPingLoop(pingCtx, conn)
@@ -355,26 +458,126 @@ func (f *Facade) readOrderFrames(ctx context.Context, conn *websocket.Conn, out 
 			continue
 		}
 
-		var ev wireOrderEvent
-		if err := json.Unmarshal(data, &ev); err != nil {
-			continue // 非 order 事件（trade 等）跳过
-		}
-		if ev.EventType != "order" {
+		// 先嗅 event_type（与 market 频道 parseBookSingle 同法）
+		var env wireUserEnvelope
+		if err := json.Unmarshal(data, &env); err != nil {
 			continue
 		}
-
-		up := OrderUpdate{
-			OrderID: OrderID(ev.ID),
-			Status:  mapOrderStatus(ev.Status),
-			Time:    time.Unix(0, int64(ev.Timestamp)*int64(time.Millisecond)),
+		switch env.EventType {
+		case "order":
+			// 与原实现一致：order 事件按平铺字段解析整帧
+			var ev wireOrderEvent
+			if err := json.Unmarshal(data, &ev); err != nil {
+				continue
+			}
+			up := OrderUpdate{
+				OrderID: OrderID(ev.ID),
+				Status:  mapOrderStatus(ev.Status),
+				Time:    time.Unix(0, int64(ev.Timestamp)*int64(time.Millisecond)),
+			}
+			if d, err := decimal.NewFromString(ev.SizeMatched); err == nil {
+				up.Filled = d
+			}
+			if !st.dispatchOrder(ctx, up) {
+				return
+			}
+		case "trade":
+			up, ok := parseTradeFrame(data, env.Data)
+			if !ok {
+				continue
+			}
+			up.Time = f.nowFn()
+			st.dispatchTrade(f, up)
+		default:
+			// 其他事件类型跳过（与原实现丢弃非 order 帧一致）
 		}
-		if d, err := decimal.NewFromString(ev.SizeMatched); err == nil {
-			up.Filled = d
+	}
+}
+
+// parseTradeFrame 解析 trade 帧 payload。clob-service 实际以 envelope 形态下发
+// （payload 嵌在 data 对象里），asyncapi 文档（对齐 Polymarket）为平铺形态；
+// 两种都兼容：envData 是 JSON object 时取 envData，否则按平铺解析整帧。
+// Time 由调用方填充（帧上无稳定 timestamp 字段）。
+func parseTradeFrame(frame []byte, envData json.RawMessage) (TradeUpdate, bool) {
+	payload := frame
+	if isJSONObject(envData) {
+		payload = envData
+	}
+	var ev wireTradeEvent
+	if err := json.Unmarshal(payload, &ev); err != nil {
+		return TradeUpdate{}, false
+	}
+	up := TradeUpdate{
+		TradeID: ev.ID,
+		Status:  ev.Status,
+		AssetID: ev.AssetID,
+		Side:    clob.SdkSide(ev.Side),
+		TxHash:  ev.TxHash,
+		Error:   ev.Error,
+		OrderID: OrderID(ev.OrderID),
+	}
+	if d, err := decimal.NewFromString(string(ev.Price)); err == nil {
+		up.Price = d
+	}
+	if d, err := decimal.NewFromString(string(ev.Size)); err == nil {
+		up.Size = d
+	}
+	if d, err := decimal.NewFromString(string(ev.Fee)); err == nil {
+		up.Fee = d
+	}
+	return up, true
+}
+
+// isJSONObject 判断 raw 是否为 JSON object（忽略前导空白）。
+func isJSONObject(raw json.RawMessage) bool {
+	for _, c := range raw {
+		switch c {
+		case ' ', '\t', '\n', '\r':
+			continue
+		default:
+			return c == '{'
+		}
+	}
+	return false
+}
+
+// dispatchOrder 把 order 事件阻塞投递给所有 order 订阅者（与原单订阅者语义
+// 一致：channel 满时施加背压，订阅者 ctx 结束时跳过该订阅者）。
+// 返回 false 表示 loop ctx 取消，read loop 应退出。
+func (st *userStream) dispatchOrder(ctx context.Context, up OrderUpdate) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, s := range st.subs {
+		if s.orderCh == nil {
+			continue
 		}
 		select {
-		case out <- up:
+		case s.orderCh <- up:
+		case <-s.ctx.Done():
+			// 订阅者已退出；detach goroutine 负责摘除与关闭 channel
 		case <-ctx.Done():
-			return
+			return false
+		}
+	}
+	return true
+}
+
+// dispatchTrade 把 trade 事件非阻塞投递给所有 trade 订阅者：channel 满时丢弃
+// 该事件（记 warn），避免慢速 trade 消费方拖住同一连接上的 order 投递。
+func (st *userStream) dispatchTrade(f *Facade, up TradeUpdate) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, s := range st.subs {
+		if s.tradeCh == nil {
+			continue
+		}
+		select {
+		case s.tradeCh <- up:
+		default:
+			f.logger.Warnw("ws trade event dropped: channel full",
+				"trade_id", up.TradeID,
+				"status", up.Status,
+			)
 		}
 	}
 }
