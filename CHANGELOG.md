@@ -2,6 +2,15 @@
 
 本仓所有显著变更记录于此。版本规范遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## Unreleased
+
+### `pkg/gamma` — 周期 series/periods 与普通市场排除契约
+
+- 新增 `ListSeries`、`ListSeriesPeriods`、`SeriesPeriod.PrimaryMarket` 及对应强类型，周期市场调用方可以完整消费 `nextCursor`，并按 `period.marketId` 精确解析主 market。
+- `EventFilter` 新增 `ExcludeTagSlug`，支持普通市场发现通过 `exclude_tag_slug=recurring` 在服务端排除周期单期。
+- market 的 `clobTokenIds`、`outcomes`、`upstreamTokenExtIds` 同时兼容 JSON 数组和 JSON 数组字符串。
+- 单测覆盖 series offset、period cursor、排除标签、主 market 精确匹配与两种 token wire 形态。
+
 ## v0.2.0-rc2（pre-release）
 
 ### `pkg/gamma` — Market / Token 暴露上下游 binding 元数据 + 两个新方法（pm-cup2026-liquidity part-1 P1.3.0b）

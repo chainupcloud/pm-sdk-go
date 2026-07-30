@@ -95,4 +95,81 @@ type EventFilter struct {
 	StartDateMax *time.Time // 开始日期上限
 	EndDateMin   *time.Time // 结束日期下限
 	EndDateMax   *time.Time // 结束日期上限
+	// ExcludeTagSlug 排除带指定 tag slug 的 event；例如 recurring 用于把周期单期
+	// 从普通市场发现结果中排除。
+	ExcludeTagSlug string
+}
+
+// Series 是事件系列。周期做市只接受 SeriesType=recurring 的系列。
+type Series struct {
+	ID         string  `json:"id"`
+	Slug       string  `json:"slug,omitempty"`
+	Title      string  `json:"title,omitempty"`
+	Ticker     string  `json:"ticker,omitempty"`
+	SeriesType string  `json:"series_type,omitempty"`
+	Recurrence string  `json:"recurrence,omitempty"`
+	Active     bool    `json:"active"`
+	Closed     bool    `json:"closed"`
+	Archived   bool    `json:"archived"`
+	Events     []Event `json:"events,omitempty"`
+}
+
+// SeriesFilter 是 ListSeries 的 offset 分页筛选条件。
+type SeriesFilter struct {
+	Limit         int
+	Offset        int
+	Order         string
+	Ascending     bool
+	Slug          string
+	Recurrence    string
+	Closed        *bool
+	ExcludeEvents bool
+}
+
+// SeriesPeriodPrice 是一个周期边界的审计价格。
+type SeriesPeriodPrice struct {
+	Price     string    `json:"price"`
+	Source    string    `json:"source"`
+	SampledAt time.Time `json:"sampled_at"`
+}
+
+// SeriesPeriod 是周期系列的一个可交易窗口。
+type SeriesPeriod struct {
+	ID          string             `json:"id"`
+	SeriesID    string             `json:"series_id"`
+	EventID     string             `json:"event_id"`
+	MarketID    string             `json:"market_id"`
+	WindowStart time.Time          `json:"window_start"`
+	WindowEnd   time.Time          `json:"window_end"`
+	Stage       string             `json:"stage"`
+	PriceToBeat *SeriesPeriodPrice `json:"price_to_beat,omitempty"`
+	FinalPrice  *SeriesPeriodPrice `json:"final_price,omitempty"`
+	Result      *string            `json:"result,omitempty"`
+	Event       *Event             `json:"event,omitempty"`
+}
+
+// PrimaryMarket 按 period.marketId 精确返回主 market，不假设嵌套数组第一项是主市场。
+func (p SeriesPeriod) PrimaryMarket() (*Market, bool) {
+	if p.Event == nil || p.MarketID == "" {
+		return nil, false
+	}
+	for i := range p.Event.Markets {
+		if p.Event.Markets[i].ID == p.MarketID {
+			return &p.Event.Markets[i], true
+		}
+	}
+	return nil, false
+}
+
+// SeriesPeriodFilter 是 ListSeriesPeriods 的 cursor 分页条件。
+type SeriesPeriodFilter struct {
+	Closed *bool
+	Limit  int
+	Cursor string
+}
+
+// SeriesPeriodPage 是周期分页响应。
+type SeriesPeriodPage struct {
+	Data       []SeriesPeriod `json:"data"`
+	NextCursor string         `json:"next_cursor,omitempty"`
 }

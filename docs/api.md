@@ -199,6 +199,9 @@ id, err := cli.Clob.PlaceOrder(ctx, clob.OrderReq{
 |------|------|
 | `GetEvent(ctx, eventID string) (*Event, error)` | 单个事件 |
 | `ListEvents(ctx, EventFilter) ([]Event, nextCursor string, error)` | 列出事件 |
+| `ListSeries(ctx, SeriesFilter) ([]Series, nextCursor string, error)` | 列出系列，offset cursor |
+| `GetSeries(ctx, seriesID, excludeEvents) (*Series, error)` | 按 ID 查询系列 |
+| `ListSeriesPeriods(ctx, seriesID, SeriesPeriodFilter) (SeriesPeriodPage, error)` | 列出周期系列分期，消费上游 opaque cursor |
 | `GetMarket(ctx, marketID string) (*Market, error)` | 单个市场 |
 | `GetToken(ctx, tokenID string) (*Token, error)` | 反查 token 所属 Market（无独立端点，走 `POST /markets/information`） |
 
@@ -236,12 +239,15 @@ type Token struct {
 | `Slug`, `TagID` | `string`/`int` | 过滤 |
 | `Active`, `Closed`, `Archived` | `*bool` | tri-state |
 | `StartDateMin`/`Max`, `EndDateMin`/`Max` | `*time.Time` | 时间范围 |
+| `ExcludeTagSlug` | `string` | 排除指定 tag slug，例如 `recurring` |
 
 ### 注意
 
 - `GetToken` 找不到时返回 `ErrNotFound`
 - ID 字段类型是 `string`（上游真实 wire 形态；DEC-038）
 - `nextCursor` 编码下一页 offset；空串表示已到末页
+- `SeriesPeriodPage.NextCursor` 是上游 opaque cursor，调用方必须原样传入下一次 `SeriesPeriodFilter.Cursor`
+- `SeriesPeriod.PrimaryMarket()` 按 `period.marketId` 精确匹配嵌套 market，不默认取第一项
 
 ---
 

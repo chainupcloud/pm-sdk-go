@@ -161,6 +161,112 @@ func TestListEvents_LastPage(t *testing.T) {
 	}
 }
 
+func TestListEvents_ExcludeTagSlug(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("exclude_tag_slug"); got != "recurring" {
+			t.Errorf("exclude_tag_slug = %q, want recurring", got)
+		}
+		_, _ = w.Write([]byte(`[]`))
+	})
+	_, _, err := f.ListEvents(context.Background(), EventFilter{ExcludeTagSlug: "recurring"})
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+}
+
+func TestListSeries_Happy(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/series" {
+			t.Errorf("path = %q, want /series", r.URL.Path)
+		}
+		q := r.URL.Query()
+		if q.Get("limit") != "1" || q.Get("offset") != "4" || q.Get("recurrence") != "5m" || q.Get("exclude_events") != "true" {
+			t.Errorf("query = %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`[{
+			"id":"11","slug":"btc-updown-5m","title":"BTC Up or Down 5m",
+			"ticker":"BTC","seriesType":"recurring","recurrence":"5m",
+			"active":true,"closed":false,"archived":false
+		}]`))
+	})
+	closed := false
+	series, cursor, err := f.ListSeries(context.Background(), SeriesFilter{
+		Limit: 1, Offset: 4, Recurrence: "5m", Closed: &closed, ExcludeEvents: true,
+	})
+	if err != nil {
+		t.Fatalf("ListSeries: %v", err)
+	}
+	if len(series) != 1 || series[0].ID != "11" || series[0].SeriesType != "recurring" || !series[0].Active {
+		t.Fatalf("series = %+v", series)
+	}
+	if cursor != "5" {
+		t.Fatalf("cursor = %q, want 5", cursor)
+	}
+}
+
+func TestGetSeries_Happy(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/series/11" || r.URL.Query().Get("exclude_events") != "true" {
+			t.Errorf("request = %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"id":"11","seriesType":"recurring","recurrence":"5m","active":true}`))
+	})
+	series, err := f.GetSeries(context.Background(), "11", true)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	if series.ID != "11" || series.SeriesType != "recurring" || series.Recurrence != "5m" {
+		t.Fatalf("series = %+v", series)
+	}
+}
+
+func TestListSeriesPeriods_HappyAndPrimaryMarket(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/series/11/periods" {
+			t.Errorf("path = %q, want /series/11/periods", r.URL.Path)
+		}
+		q := r.URL.Query()
+		if q.Get("closed") != "false" || q.Get("limit") != "100" || q.Get("cursor") != "page-1" {
+			t.Errorf("query = %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{
+			"data":[{
+				"id":"2016","seriesId":"11","eventId":"1001","marketId":"2002",
+				"windowStart":"2026-07-30T12:00:00Z","windowEnd":"2026-07-30T12:05:00Z","stage":"published",
+				"event":{"id":"1001","slug":"btc-updown-5m-1","title":"BTC Up or Down",
+					"active":true,"closed":false,"archived":false,"markets":[
+						{"id":"2001","conditionId":"0xother","clobTokenIds":"[\"1\",\"2\"]"},
+						{"id":"2002","conditionId":"0xprimary","active":true,"closed":false,"acceptingOrders":true,
+						 "outcomes":["Up","Down"],"clobTokenIds":["3","4"],"upstreamTokenExtIds":["5","6"]}
+					]}
+			}],"nextCursor":"page-2"
+		}`))
+	})
+	closed := false
+	page, err := f.ListSeriesPeriods(context.Background(), "11", SeriesPeriodFilter{Closed: &closed, Limit: 100, Cursor: "page-1"})
+	if err != nil {
+		t.Fatalf("ListSeriesPeriods: %v", err)
+	}
+	if len(page.Data) != 1 || page.NextCursor != "page-2" {
+		t.Fatalf("page = %+v", page)
+	}
+	market, ok := page.Data[0].PrimaryMarket()
+	if !ok || market.ID != "2002" || market.YesTokenID != "3" || market.NoTokenID != "4" {
+		t.Fatalf("primary market = %+v ok=%v", market, ok)
+	}
+	if len(market.Outcomes) != 2 || market.Outcomes[0] != "Up" || market.UpstreamTokenExtIDs[1] != "6" {
+		t.Fatalf("flexible arrays not decoded: %+v", market)
+	}
+}
+
+func TestListSeriesPeriods_EmptySeriesID(t *testing.T) {
+	f, _ := NewFacade("http://unused.example", http.DefaultClient)
+	_, err := f.ListSeriesPeriods(context.Background(), "", SeriesPeriodFilter{})
+	if !errors.Is(err, clob.ErrPrecondition) {
+		t.Fatalf("err = %v, want ErrPrecondition", err)
+	}
+}
+
 func TestGetMarket_Happy(t *testing.T) {
 	market := `{
       "id": "2001",
