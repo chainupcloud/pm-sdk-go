@@ -225,6 +225,33 @@ func (f *Facade) ListSeries(ctx context.Context, filter SeriesFilter) ([]Series,
 	return out, cursor, nil
 }
 
+// GetSeries 按 ID 查询一个 tenant-scoped series；excludeEvents 用于控制是否返回历史 events。
+func (f *Facade) GetSeries(ctx context.Context, seriesID string, excludeEvents bool) (*Series, error) {
+	if seriesID == "" {
+		return nil, fmt.Errorf("%w: empty series id", errPrecondition)
+	}
+	editors := []RequestEditorFn{}
+	if excludeEvents {
+		editors = append(editors, queryEditor("exclude_events", "true"))
+	}
+	op := f.observe("GetSeries", "GET", "/series/{id}")
+	resp, err := f.low.GetSeriesId(ctx, seriesID, editors...)
+	op.done(resp, err)
+	if err != nil {
+		return nil, wrapTransportError(ctx, err)
+	}
+	defer drainBody(resp)
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, wrapHTTPError(resp, body)
+	}
+	var wire wireSeries
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return nil, fmt.Errorf("%w: decode Series: %v", errUpstream, err)
+	}
+	return wireSeriesToSDK(&wire), nil
+}
+
 // ListSeriesPeriods 列出一个 recurring series 的周期窗口。
 func (f *Facade) ListSeriesPeriods(ctx context.Context, seriesID string, filter SeriesPeriodFilter) (SeriesPeriodPage, error) {
 	if seriesID == "" {
@@ -477,18 +504,18 @@ func upstreamTokenExtIDAt(w *wireMarket, outcomeIndex int) string {
 // 这里只声明 SDK Event 关心的字段；上游字段更多（Volume / Tags / Series 等）
 // 暂不暴露，未来按需扩展。
 type wireEvent struct {
-	ID           string          `json:"id"`
-	Slug         *string         `json:"slug"`
-	Title        *string         `json:"title"`
-	Description  *string         `json:"description"`
-	Category     *string         `json:"category"`
-	Active       *bool           `json:"active"`
-	Closed       *bool           `json:"closed"`
-	Archived     *bool           `json:"archived"`
-	StartDate    *jsonTime       `json:"startDate"`
-	EndDate      *jsonTime       `json:"endDate"`
-	CreationDate *jsonTime       `json:"creationDate"`
-	Markets      []wireMarket    `json:"markets"`
+	ID           string       `json:"id"`
+	Slug         *string      `json:"slug"`
+	Title        *string      `json:"title"`
+	Description  *string      `json:"description"`
+	Category     *string      `json:"category"`
+	Active       *bool        `json:"active"`
+	Closed       *bool        `json:"closed"`
+	Archived     *bool        `json:"archived"`
+	StartDate    *jsonTime    `json:"startDate"`
+	EndDate      *jsonTime    `json:"endDate"`
+	CreationDate *jsonTime    `json:"creationDate"`
+	Markets      []wireMarket `json:"markets"`
 }
 
 type wireSeries struct {
@@ -545,9 +572,9 @@ type wireMarket struct {
 	EventID string `json:"eventId"`
 	// Outcomes 与 ClobTokenIDs 同样是 JSON 数组字符串（如 `"[\"Yes\",\"No\"]"`），需要二次 unmarshal。
 	Outcomes            json.RawMessage `json:"outcomes"`
-	UpstreamType        string  `json:"upstreamType"`
-	UpstreamMarketExtID string  `json:"upstreamMarketExtId"`
-	UpstreamEventExtID  string  `json:"upstreamEventExtId"`
+	UpstreamType        string          `json:"upstreamType"`
+	UpstreamMarketExtID string          `json:"upstreamMarketExtId"`
+	UpstreamEventExtID  string          `json:"upstreamEventExtId"`
 	// UpstreamTokenExtIDs 是与 ClobTokenIDs / Outcomes 同序的 JSON 数组字符串，需要二次 unmarshal。
 	UpstreamTokenExtIDs json.RawMessage `json:"upstreamTokenExtIds"`
 }

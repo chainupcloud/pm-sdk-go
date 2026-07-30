@@ -204,6 +204,22 @@ func TestListSeries_Happy(t *testing.T) {
 	}
 }
 
+func TestGetSeries_Happy(t *testing.T) {
+	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/series/11" || r.URL.Query().Get("exclude_events") != "true" {
+			t.Errorf("request = %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"id":"11","seriesType":"recurring","recurrence":"5m","active":true}`))
+	})
+	series, err := f.GetSeries(context.Background(), "11", true)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	if series.ID != "11" || series.SeriesType != "recurring" || series.Recurrence != "5m" {
+		t.Fatalf("series = %+v", series)
+	}
+}
+
 func TestListSeriesPeriods_HappyAndPrimaryMarket(t *testing.T) {
 	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/series/11/periods" {

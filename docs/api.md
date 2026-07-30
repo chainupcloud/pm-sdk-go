@@ -200,6 +200,7 @@ id, err := cli.Clob.PlaceOrder(ctx, clob.OrderReq{
 | `GetEvent(ctx, eventID string) (*Event, error)` | 单个事件 |
 | `ListEvents(ctx, EventFilter) ([]Event, nextCursor string, error)` | 列出事件 |
 | `ListSeries(ctx, SeriesFilter) ([]Series, nextCursor string, error)` | 列出系列，offset cursor |
+| `GetSeries(ctx, seriesID, excludeEvents) (*Series, error)` | 按 ID 查询系列 |
 | `ListSeriesPeriods(ctx, seriesID, SeriesPeriodFilter) (SeriesPeriodPage, error)` | 列出周期系列分期，消费上游 opaque cursor |
 | `GetMarket(ctx, marketID string) (*Market, error)` | 单个市场 |
 | `GetToken(ctx, tokenID string) (*Token, error)` | 反查 token 所属 Market（无独立端点，走 `POST /markets/information`） |
