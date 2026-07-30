@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/chainupcloud/pm-sdk-go/pkg/clob"
 	"github.com/chainupcloud/pm-sdk-go/pkg/obs"
@@ -129,7 +131,11 @@ func (f *Facade) ListEvents(ctx context.Context, filter EventFilter) ([]Event, s
 	}
 
 	op := f.observe("ListEvents", "GET", "/events")
-	resp, err := f.low.GetEvents(ctx, params)
+	editors := []RequestEditorFn{}
+	if filter.ExcludeTagSlug != "" {
+		editors = append(editors, queryEditor("exclude_tag_slug", filter.ExcludeTagSlug))
+	}
+	resp, err := f.low.GetEvents(ctx, params, editors...)
 	op.done(resp, err)
 	if err != nil {
 		return nil, "", wrapTransportError(ctx, err)
@@ -161,6 +167,136 @@ func (f *Facade) ListEvents(ctx context.Context, filter EventFilter) ([]Event, s
 		cursor = fmt.Sprintf("%d", next)
 	}
 	return out, cursor, nil
+}
+
+// ListSeries 列出 tenant-scoped series，并把上游 offset 分页转换为 next cursor。
+func (f *Facade) ListSeries(ctx context.Context, filter SeriesFilter) ([]Series, string, error) {
+	query := url.Values{}
+	if filter.Limit > 0 {
+		query.Set("limit", strconv.Itoa(filter.Limit))
+	}
+	if filter.Offset > 0 {
+		query.Set("offset", strconv.Itoa(filter.Offset))
+	}
+	if filter.Order != "" {
+		query.Set("order", filter.Order)
+	}
+	if filter.Ascending {
+		query.Set("ascending", "true")
+	}
+	if filter.Slug != "" {
+		query.Set("slug", filter.Slug)
+	}
+	if filter.Recurrence != "" {
+		query.Set("recurrence", filter.Recurrence)
+	}
+	if filter.Closed != nil {
+		query.Set("closed", strconv.FormatBool(*filter.Closed))
+	}
+	if filter.ExcludeEvents {
+		query.Set("exclude_events", "true")
+	}
+
+	op := f.observe("ListSeries", "GET", "/series")
+	resp, err := f.low.GetSeries(ctx, valuesEditor(query))
+	op.done(resp, err)
+	if err != nil {
+		return nil, "", wrapTransportError(ctx, err)
+	}
+	defer drainBody(resp)
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, "", wrapHTTPError(resp, body)
+	}
+
+	var wires []wireSeries
+	if err := json.Unmarshal(body, &wires); err != nil {
+		return nil, "", fmt.Errorf("%w: decode []Series: %v", errUpstream, err)
+	}
+	out := make([]Series, 0, len(wires))
+	for i := range wires {
+		out = append(out, *wireSeriesToSDK(&wires[i]))
+	}
+	cursor := ""
+	if filter.Limit > 0 && len(wires) >= filter.Limit {
+		cursor = strconv.Itoa(filter.Offset + filter.Limit)
+	}
+	return out, cursor, nil
+}
+
+// ListSeriesPeriods 列出一个 recurring series 的周期窗口。
+func (f *Facade) ListSeriesPeriods(ctx context.Context, seriesID string, filter SeriesPeriodFilter) (SeriesPeriodPage, error) {
+	if seriesID == "" {
+		return SeriesPeriodPage{}, fmt.Errorf("%w: empty series id", errPrecondition)
+	}
+	req, err := NewGetSeriesIdRequest(f.low.Server, seriesID)
+	if err != nil {
+		return SeriesPeriodPage{}, fmt.Errorf("gamma: build series periods request: %w", err)
+	}
+	req.URL.Path = strings.TrimSuffix(req.URL.Path, "/") + "/periods"
+	query := req.URL.Query()
+	if filter.Closed != nil {
+		query.Set("closed", strconv.FormatBool(*filter.Closed))
+	}
+	if filter.Limit > 0 {
+		query.Set("limit", strconv.Itoa(filter.Limit))
+	}
+	if filter.Cursor != "" {
+		query.Set("cursor", filter.Cursor)
+	}
+	req.URL.RawQuery = query.Encode()
+	req = req.WithContext(ctx)
+	if err := f.low.applyEditors(ctx, req, nil); err != nil {
+		return SeriesPeriodPage{}, fmt.Errorf("gamma: edit series periods request: %w", err)
+	}
+
+	op := f.observe("ListSeriesPeriods", "GET", "/series/{id}/periods")
+	resp, err := f.low.Client.Do(req)
+	op.done(resp, err)
+	if err != nil {
+		return SeriesPeriodPage{}, wrapTransportError(ctx, err)
+	}
+	defer drainBody(resp)
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return SeriesPeriodPage{}, wrapHTTPError(resp, body)
+	}
+	var wire wireSeriesPeriodPage
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return SeriesPeriodPage{}, fmt.Errorf("%w: decode SeriesPeriodPage: %v", errUpstream, err)
+	}
+	out := SeriesPeriodPage{Data: make([]SeriesPeriod, 0, len(wire.Data))}
+	if wire.NextCursor != nil {
+		out.NextCursor = *wire.NextCursor
+	}
+	for i := range wire.Data {
+		out.Data = append(out.Data, *wireSeriesPeriodToSDK(&wire.Data[i]))
+	}
+	return out, nil
+}
+
+func queryEditor(key, value string) RequestEditorFn {
+	return func(_ context.Context, req *http.Request) error {
+		query := req.URL.Query()
+		query.Set(key, value)
+		req.URL.RawQuery = query.Encode()
+		return nil
+	}
+}
+
+func valuesEditor(values url.Values) RequestEditorFn {
+	return func(_ context.Context, req *http.Request) error {
+		query := req.URL.Query()
+		for key, vals := range values {
+			for _, value := range vals {
+				query.Add(key, value)
+			}
+		}
+		req.URL.RawQuery = query.Encode()
+		return nil
+	}
 }
 
 // GetMarket 查询单个市场（契约 §5）。
@@ -327,7 +463,7 @@ func (f *Facade) GetToken(ctx context.Context, tokenID string) (*Token, error) {
 // upstreamTokenExtIDAt 从 wireMarket.UpstreamTokenExtIDs 平行数组按 outcomeIndex
 // 取上游 token 标识；数组缺失 / 越界 / 该位置为空时返回空字符串。
 func upstreamTokenExtIDAt(w *wireMarket, outcomeIndex int) string {
-	exts := parseJSONStringArray(w.UpstreamTokenExtIDs)
+	exts := parseFlexibleStringArray(w.UpstreamTokenExtIDs)
 	if outcomeIndex < 0 || outcomeIndex >= len(exts) {
 		return ""
 	}
@@ -355,6 +491,44 @@ type wireEvent struct {
 	Markets      []wireMarket    `json:"markets"`
 }
 
+type wireSeries struct {
+	ID         string      `json:"id"`
+	Slug       *string     `json:"slug"`
+	Title      *string     `json:"title"`
+	Ticker     *string     `json:"ticker"`
+	SeriesType *string     `json:"seriesType"`
+	Recurrence *string     `json:"recurrence"`
+	Active     *bool       `json:"active"`
+	Closed     *bool       `json:"closed"`
+	Archived   *bool       `json:"archived"`
+	Events     []wireEvent `json:"events"`
+}
+
+type wireSeriesPeriodPrice struct {
+	Price     string   `json:"price"`
+	Source    string   `json:"source"`
+	SampledAt jsonTime `json:"sampledAt"`
+}
+
+type wireSeriesPeriod struct {
+	ID          string                 `json:"id"`
+	SeriesID    string                 `json:"seriesId"`
+	EventID     string                 `json:"eventId"`
+	MarketID    string                 `json:"marketId"`
+	WindowStart jsonTime               `json:"windowStart"`
+	WindowEnd   jsonTime               `json:"windowEnd"`
+	Stage       string                 `json:"stage"`
+	PriceToBeat *wireSeriesPeriodPrice `json:"priceToBeat"`
+	FinalPrice  *wireSeriesPeriodPrice `json:"finalPrice"`
+	Result      *string                `json:"result"`
+	Event       *wireEvent             `json:"event"`
+}
+
+type wireSeriesPeriodPage struct {
+	Data       []wireSeriesPeriod `json:"data"`
+	NextCursor *string            `json:"nextCursor"`
+}
+
 // wireMarket 对应上游 gamma-service models.Market 的 JSON 形态。
 type wireMarket struct {
 	ID              string    `json:"id"`
@@ -365,17 +539,72 @@ type wireMarket struct {
 	Closed          *bool     `json:"closed"`
 	AcceptingOrders *bool     `json:"acceptingOrders"`
 	EndDate         *jsonTime `json:"endDate"`
-	// ClobTokenIDs 是 JSON 数组字符串（如 `"[\"123\",\"456\"]"`），需要二次 unmarshal。
-	ClobTokenIDs *string `json:"clobTokenIds"`
+	// token/outcome 字段兼容 JSON 数组与 JSON 数组字符串两种 wire 形态。
+	ClobTokenIDs json.RawMessage `json:"clobTokenIds"`
 	// v0.2.0-rc1 新增：上游 gamma-service P1.3.0 起暴露的字段。
 	EventID string `json:"eventId"`
 	// Outcomes 与 ClobTokenIDs 同样是 JSON 数组字符串（如 `"[\"Yes\",\"No\"]"`），需要二次 unmarshal。
-	Outcomes            *string `json:"outcomes"`
+	Outcomes            json.RawMessage `json:"outcomes"`
 	UpstreamType        string  `json:"upstreamType"`
 	UpstreamMarketExtID string  `json:"upstreamMarketExtId"`
 	UpstreamEventExtID  string  `json:"upstreamEventExtId"`
 	// UpstreamTokenExtIDs 是与 ClobTokenIDs / Outcomes 同序的 JSON 数组字符串，需要二次 unmarshal。
-	UpstreamTokenExtIDs *string `json:"upstreamTokenExtIds"`
+	UpstreamTokenExtIDs json.RawMessage `json:"upstreamTokenExtIds"`
+}
+
+func wireSeriesToSDK(w *wireSeries) *Series {
+	if w == nil {
+		return nil
+	}
+	out := &Series{ID: w.ID}
+	if w.Slug != nil {
+		out.Slug = *w.Slug
+	}
+	if w.Title != nil {
+		out.Title = *w.Title
+	}
+	if w.Ticker != nil {
+		out.Ticker = *w.Ticker
+	}
+	if w.SeriesType != nil {
+		out.SeriesType = *w.SeriesType
+	}
+	if w.Recurrence != nil {
+		out.Recurrence = *w.Recurrence
+	}
+	if w.Active != nil {
+		out.Active = *w.Active
+	}
+	if w.Closed != nil {
+		out.Closed = *w.Closed
+	}
+	if w.Archived != nil {
+		out.Archived = *w.Archived
+	}
+	for i := range w.Events {
+		out.Events = append(out.Events, *wireEventToSDK(&w.Events[i]))
+	}
+	return out
+}
+
+func wireSeriesPeriodToSDK(w *wireSeriesPeriod) *SeriesPeriod {
+	if w == nil {
+		return nil
+	}
+	out := &SeriesPeriod{
+		ID: w.ID, SeriesID: w.SeriesID, EventID: w.EventID, MarketID: w.MarketID,
+		WindowStart: w.WindowStart.Time, WindowEnd: w.WindowEnd.Time, Stage: w.Stage, Result: w.Result,
+	}
+	if w.PriceToBeat != nil {
+		out.PriceToBeat = &SeriesPeriodPrice{Price: w.PriceToBeat.Price, Source: w.PriceToBeat.Source, SampledAt: w.PriceToBeat.SampledAt.Time}
+	}
+	if w.FinalPrice != nil {
+		out.FinalPrice = &SeriesPeriodPrice{Price: w.FinalPrice.Price, Source: w.FinalPrice.Source, SampledAt: w.FinalPrice.SampledAt.Time}
+	}
+	if w.Event != nil {
+		out.Event = wireEventToSDK(w.Event)
+	}
+	return out
 }
 
 func wireEventToSDK(w *wireEvent) *Event {
@@ -449,7 +678,7 @@ func wireMarketToSDK(w *wireMarket) *Market {
 	if w.EndDate != nil {
 		out.EndDate = w.EndDate.Time
 	}
-	if ids := parseJSONStringArray(w.ClobTokenIDs); len(ids) > 0 {
+	if ids := parseFlexibleStringArray(w.ClobTokenIDs); len(ids) > 0 {
 		if len(ids) > 0 {
 			out.YesTokenID = ids[0]
 		}
@@ -457,8 +686,8 @@ func wireMarketToSDK(w *wireMarket) *Market {
 			out.NoTokenID = ids[1]
 		}
 	}
-	out.Outcomes = parseJSONStringArray(w.Outcomes)
-	out.UpstreamTokenExtIDs = parseJSONStringArray(w.UpstreamTokenExtIDs)
+	out.Outcomes = parseFlexibleStringArray(w.Outcomes)
+	out.UpstreamTokenExtIDs = parseFlexibleStringArray(w.UpstreamTokenExtIDs)
 	return out
 }
 
@@ -473,6 +702,21 @@ func parseJSONStringArray(raw *string) []string {
 		return nil
 	}
 	return out
+}
+
+func parseFlexibleStringArray(raw json.RawMessage) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err == nil {
+		return values
+	}
+	var encoded string
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		return nil
+	}
+	return parseJSONStringArray(&encoded)
 }
 
 // ---------- 内部辅助 ----------
