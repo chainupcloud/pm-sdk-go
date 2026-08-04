@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+### `pkg/clob` — 订单簿 timestamp wire 兼容
+
+- `GetBook` 与生成客户端的 `GetBook(s)WithResponse` 在单次响应解码内兼容 Hermes 当前 RFC3339/RFC3339Nano timestamp，以及历史 Unix 秒/毫秒的数字或数字字符串；不再要求调用方为类型差异二次回源。
+- 真实 Hermes 字符串形式的 `min_order_size`、`tick_size` 同步兼容；缺失/null timestamp 映射为零时间，非法值返回解码错误。
+- 契约 fixture 改为真实 Hermes `/book` wire，并增加单请求次数、批量响应和各类 timestamp 回归测试。
+
 ### `pkg/gamma` — 周期 series/periods 与普通市场排除契约
 
 - 新增 `ListSeries`、`ListSeriesPeriods`、`SeriesPeriod.PrimaryMarket` 及对应强类型，周期市场调用方可以完整消费 `nextCursor`，并按 `period.marketId` 精确解析主 market。
