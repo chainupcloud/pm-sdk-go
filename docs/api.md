@@ -121,6 +121,10 @@ type Level struct {
 }
 ```
 
+`Book.UpdateAt` 在一次响应解析内兼容 Hermes 当前 RFC3339/RFC3339Nano 字符串，
+以及历史 Unix 秒、Unix 毫秒的数字或数字字符串。wire 缺失/null timestamp 映射为
+零时间；非法 timestamp 返回 `ErrUpstream`，SDK 不会为类型兼容再次请求 `/book`。
+
 ### `type SdkTrade`
 
 | 字段 | 类型 |

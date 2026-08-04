@@ -10,6 +10,7 @@ package clob
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/chainupcloud/pm-sdk-go/internal/contracttest"
 	"github.com/shopspring/decimal"
@@ -23,8 +24,8 @@ type noopSigner struct{}
 func (noopSigner) Sign(_ context.Context, _ []byte) ([]byte, error) {
 	return []byte{0x01, 0x02, 0x03}, nil
 }
-func (noopSigner) Address() string         { return "0x1111111111111111111111111111111111111111" }
-func (noopSigner) SchemaVersion() string   { return "test-v1" }
+func (noopSigner) Address() string       { return "0x1111111111111111111111111111111111111111" }
+func (noopSigner) SchemaVersion() string { return "test-v1" }
 
 var _ pmsigner.Signer = noopSigner{}
 
@@ -93,5 +94,9 @@ func TestContract_GetBook(t *testing.T) {
 	}
 	if len(book.Bids) == 0 || len(book.Asks) == 0 {
 		t.Errorf("empty book bids=%d asks=%d", len(book.Bids), len(book.Asks))
+	}
+	wantUpdateAt := time.Date(2026, time.August, 4, 10, 31, 45, 0, time.UTC)
+	if !book.UpdateAt.Equal(wantUpdateAt) {
+		t.Errorf("UpdateAt = %s, want %s", book.UpdateAt, wantUpdateAt)
 	}
 }

@@ -642,7 +642,12 @@ func bookSummaryToSDK(s *OrderBookSummary, tokenID string) *Book {
 		}
 	}
 	if s.Timestamp != nil {
-		out.UpdateAt = time.Unix(int64(*s.Timestamp), 0).UTC()
+		timestamp := int64(*s.Timestamp)
+		if timestamp >= 100_000_000_000 || timestamp <= -100_000_000_000 {
+			out.UpdateAt = time.UnixMilli(timestamp).UTC()
+		} else {
+			out.UpdateAt = time.Unix(timestamp, 0).UTC()
+		}
 	}
 	return out
 }

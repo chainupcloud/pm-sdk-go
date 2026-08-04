@@ -1,6 +1,6 @@
 {
-  "name": "GetBook happy path (placeholder)",
-  "comment": "TODO: replace with real staging recording.",
+  "name": "GetBook happy path (Hermes wire)",
+  "comment": "Hermes /book 使用 RFC3339 timestamp，并将订单大小和 tick 编码为字符串。",
   "request": {
     "method": "GET",
     "path": "/book",
@@ -15,7 +15,8 @@
     "body": {
       "market": "0xmarketconditionid",
       "asset_id": "100200300",
-      "timestamp": 1714150000,
+      "hash": "",
+      "timestamp": "2026-08-04T10:31:45Z",
       "bids": [
         {"price": "0.54", "size": "100"},
         {"price": "0.53", "size": "200"}
@@ -23,7 +24,12 @@
       "asks": [
         {"price": "0.56", "size": "150"},
         {"price": "0.57", "size": "250"}
-      ]
+      ],
+      "min_order_size": "5",
+      "max_order_size": "",
+      "tick_size": "0.001",
+      "neg_risk": false,
+      "last_trade_price": "0.55"
     }
   }
 }
