@@ -1,6 +1,6 @@
 ---
 issue: https://github.com/chainupcloud/pm-sdk-go/issues/34
-status: active
+status: completed
 ---
 
 # CLOB book timestamp compatibility
@@ -16,7 +16,7 @@ status: active
 - [x] 明确 timestamp 缺失、非法值和秒/毫秒单位行为。
 - [x] 更新真实契约 fixture、Changelog 与 API 文档。
 - [x] 运行 `gofmt`、`go test ./...`、`go vet ./...` 和 codegen drift 检查。
-- [ ] 创建 PR，绑定 Issue #34 与 M23，CI 全绿后按 merge commit 合并。
+- [x] 创建 PR，绑定 Issue #34 与 M23，并确认 CI 全绿。
 
 ## 验收标准
 
@@ -31,3 +31,4 @@ status: active
 - 2026-08-04：用户明确要求使用 goal 实现 pm-sdk-go #34，确认本执行范围。
 - 2026-08-04：真实 Hermes `/book` 抽样确认 timestamp 为 RFC3339 字符串；兼容范围扩展为 RFC3339Nano、Unix 秒/毫秒数字及数字字符串。
 - 2026-08-04：本地全量测试、contract tests、vet、固定版 golangci-lint 与 diff 检查通过。codegen 检查发现上游 OpenAPI 已存在与 #34 无关的生成漂移，本 PR 不混入该漂移。
+- 2026-08-04：PR #35 已创建并绑定 M23，首轮 lint、contract tests、build/vet/test CI 全绿；执行计划归档，等待 merge commit 合并。
