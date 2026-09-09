@@ -335,31 +335,19 @@ func (f *Facade) ListOrders(ctx context.Context, filter OrderFilter) ([]SdkOrder
 	}
 	defer drainBody(resp)
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("read OrdersResponse: %w", wrapTransportError(ctx, err))
+	}
 	if resp.StatusCode >= 300 {
 		return nil, "", wrapHTTPError(resp, respBody)
 	}
 
-	var or OrdersResponse
-	if err := jsonUnmarshal(respBody, &or); err != nil {
+	orders, cursor, err := decodeListOrdersResponse(respBody)
+	if err != nil {
 		return nil, "", fmt.Errorf("%w: decode OrdersResponse: %v", ErrUpstream, err)
 	}
-	// 缺少数据或分页字段不是“零活单”，调用方不得据此接受新代或恢复交易。
-	if or.Data == nil || or.NextCursor == nil {
-		return nil, "", fmt.Errorf("%w: incomplete OrdersResponse: data and next_cursor required", ErrUpstream)
-	}
-	out := make([]SdkOrder, 0)
-	if or.Data != nil {
-		for i := range *or.Data {
-			oo := (*or.Data)[i]
-			out = append(out, *openOrderToSDK(&oo))
-		}
-	}
-	cursor := ""
-	if or.NextCursor != nil {
-		cursor = *or.NextCursor
-	}
-	return out, cursor, nil
+	return orders, cursor, nil
 }
 
 // GetBook 取订单簿快照（契约 §4）。tokenID 即 uint256 decimal 字符串。
