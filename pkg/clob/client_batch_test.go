@@ -377,8 +377,51 @@ func TestReplaceOrders_AllSuccess(t *testing.T) {
 			t.Fatalf("cancel[%d] err = %v", i, r.Err)
 		}
 	}
+	if res.Cancels[0].Status != "canceled" || res.Cancels[1].Status != "not_found" {
+		t.Fatalf("cancel wire statuses were lost: %+v", res.Cancels)
+	}
 	if len(res.Placements) != 1 || res.Placements[0].Err != nil || res.Placements[0].OrderID != "new-1" {
 		t.Fatalf("placements = %+v", res.Placements)
+	}
+}
+
+func TestReplaceOrders_CancelFailStopPreservesReason(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"stoppedAt":"cancel","errorMsg":"cancel failed","cancels":[{"orderID":"old-1","status":"failed","errorMsg":"event unhealthy"}],"placements":[]}`))
+	}))
+	defer srv.Close()
+	f, err := NewFacade(srv.URL, srv.Client(), WithSigner(&mockSigner{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := f.ReplaceOrders(context.Background(), []OrderID{"old-1"}, []OrderReq{batchOrderReq("c-1", SideBuy, "0.50", "10")})
+	if err == nil || res.StoppedAt != "cancel" || res.Cancels[0].Err == nil || res.Cancels[0].Status != "failed" || res.Cancels[0].ErrorMsg != "event unhealthy" {
+		t.Fatalf("lost cancel failure: result=%+v cancels=%+v err=%v", res, res.Cancels, err)
+	}
+	if res.Placements[0].Err == nil || res.Placements[0].OrderID != "" {
+		t.Fatalf("unprocessed placement reported successful: %+v", res.Placements)
+	}
+}
+
+func TestReplaceOrders_UnprovenCancelIsNotSuccessful(t *testing.T) {
+	for _, body := range []string{
+		``,
+		`{"cancels":[],"placements":[]}`,
+		`{"cancels":[{"orderID":"different-order","status":"canceled"}],"placements":[]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) }))
+			defer srv.Close()
+			f, err := NewFacade(srv.URL, srv.Client(), WithSigner(&mockSigner{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, _ := f.ReplaceOrders(context.Background(), []OrderID{"old-1"}, nil)
+			if res.Cancels[0].Err == nil {
+				t.Fatalf("unproven cancel reported successful: %+v", res.Cancels)
+			}
+		})
 	}
 }
 

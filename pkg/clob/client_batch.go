@@ -25,6 +25,9 @@ type PlaceResult struct {
 type CancelResult struct {
 	ID  OrderID
 	Err error
+	// Status 保留 ReplaceOrders 服务端的原始状态；旧批量撤单接口未提供时为空。
+	Status   string
+	ErrorMsg string
 }
 
 // PlaceOrders 批量下单（issue chainupcloud/pm-cup2026-liquidity#389）。
@@ -207,4 +210,3 @@ func (f *Facade) CancelOrders(ctx context.Context, ids []OrderID) ([]CancelResul
 	}
 	return results, nil
 }
-
