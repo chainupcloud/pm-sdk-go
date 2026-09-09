@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+### `pkg/clob` — `ListOrders` 单响应 created_at 兼容
+
+- `ListOrders` 在同一 HTTP 响应内兼容 `created_at` 的 Unix 秒/毫秒（JSON 数字或数字字符串）与 RFC3339Nano；RFC3339Nano 保留纳秒精度并统一为 UTC，不会因类型兼容额外请求 `/orders`。
+- 缺失、null 或空字符串时间保持零时间；字符串沿用原 liquidity adapter 的前后空白裁剪。`0`、负数及对应数字字符串统一按旧 SDK 数值的 Unix 秒语义；绝对值不小于 `100000000000` 的整数按 Unix 毫秒解析。
+- `data` 与 `next_cursor` 仍必须存在且非 null；非法时间、非对象订单、损坏 JSON 或普通响应读取失败返回 `ErrUpstream`，请求/读取期间的 context 取消或截止返回 `ErrCancelled`，不返回可接受的部分订单集合。
+
 ### `pkg/clob` — 订单簿 timestamp wire 兼容
 
 - `GetBook` 与生成客户端的 `GetBook(s)WithResponse` 在单次响应解码内兼容 Hermes 当前 RFC3339/RFC3339Nano timestamp，以及历史 Unix 秒/毫秒的数字或数字字符串；不再要求调用方为类型差异二次回源。

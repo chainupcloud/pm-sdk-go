@@ -106,6 +106,8 @@ if err != nil { log.Fatal(err) }
 | `CreatedAt` / `UpdatedAt` | `time.Time` |
 | `ClientOrder` | `string` |
 
+`ListOrders` 在一次 HTTP 响应读取内兼容 `created_at` 的 Unix 秒/毫秒（数字或数字字符串）和 RFC3339Nano。RFC3339Nano 的纳秒精度会保留并转换为 UTC；缺失、`null` 或空字符串映射为零时间。字符串沿用原 liquidity adapter 的前后空白裁剪，纯空白也视为空字符串。`0`、负数及对应数字字符串按 Unix 秒处理；绝对值不小于 `100000000000` 的整数按 Unix 毫秒处理。`data` 和 `next_cursor` 必须存在且非 `null`；非法时间、非对象订单、损坏 JSON 或普通读取失败返回 `ErrUpstream`，请求或读取期间的 context 取消/截止返回 `ErrCancelled`。失败不返回部分订单，也不为类型兼容再次请求 `/orders`。
+
 ### `type Book` / `type Level`
 
 ```go
