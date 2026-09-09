@@ -23,8 +23,9 @@ type replaceOrdersWireResponse struct {
 }
 
 type replaceCancelWireResult struct {
-	OrderID string `json:"orderID"`
-	Status  string `json:"status"`
+	OrderID  string `json:"orderID"`
+	Status   string `json:"status"`
+	ErrorMsg string `json:"errorMsg,omitempty"`
 }
 
 type replacePlaceWireResult struct {
@@ -52,6 +53,10 @@ func (f *Facade) ReplaceOrders(ctx context.Context, cancelIDs []OrderID, reqs []
 	}
 	for i, id := range cancelIDs {
 		out.Cancels[i].ID = id
+		out.Cancels[i].Err = fmt.Errorf("%w: cancel result not received", ErrUpstream)
+	}
+	for i := range reqs {
+		out.Placements[i].Err = fmt.Errorf("%w: placement result not received", ErrUpstream)
 	}
 	if len(cancelIDs) == 0 && len(reqs) == 0 {
 		return out, nil
@@ -139,13 +144,19 @@ func mapReplaceCancels(out *ReplaceResult, cancelIDs []OrderID, wireIdx []int, p
 		idx := wireIdx[i]
 		seen[idx] = true
 		out.Cancels[idx].ID = cancelIDs[idx]
+		out.Cancels[idx].Status = item.Status
+		out.Cancels[idx].ErrorMsg = item.ErrorMsg
+		if item.OrderID != string(cancelIDs[idx]) {
+			out.Cancels[idx].Err = fmt.Errorf("%w: cancel response order id mismatch at index %d", ErrUpstream, idx)
+			continue
+		}
 		switch item.Status {
 		case "canceled", "not_found":
 			out.Cancels[idx].Err = nil
 		case "":
 			out.Cancels[idx].Err = fmt.Errorf("%w: empty cancel status", ErrUpstream)
 		default:
-			out.Cancels[idx].Err = fmt.Errorf("%w: cancel %s", ErrUpstream, item.Status)
+			out.Cancels[idx].Err = fmt.Errorf("%w: cancel %s: %s", ErrUpstream, item.Status, item.ErrorMsg)
 		}
 	}
 	for _, idx := range wireIdx {
@@ -178,6 +189,7 @@ func mapReplacePlacements(out *ReplaceResult, wireIdx []int, parsed []replacePla
 			out.Placements[idx].Err = fmt.Errorf("%w: %s", ErrUpstream, msg)
 		default:
 			out.Placements[idx].OrderID = OrderID(item.OrderID)
+			out.Placements[idx].Err = nil
 		}
 	}
 	for _, idx := range wireIdx {
