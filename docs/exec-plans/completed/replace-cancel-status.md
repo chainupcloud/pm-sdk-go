@@ -1,7 +1,8 @@
 ---
 issue: 36
 milestone: M23
-status: active
+status: completed
+phase: implementation-and-review-complete
 ---
 
 # 保留 ReplaceOrders 撤单原始状态与原因
@@ -14,6 +15,11 @@ status: active
 不改鉴权、签名、定价或传输重试。库 PR 到 main，供 liquidity dev pin 后验证。
 
 ## 验证
+
+- [x] 真实 HTTP 红测与最小绿化。
+- [x] 全仓测试、vet、定向 race。
+- [x] 独立 Spec 审查 0 项；Standards 唯一文档归档问题已修正。
+- [x] PR #37；业务服务使用已固定 commit，服务 dev 验证由关联 #2003 收口。
 
 - 已跑真实 HTTP 红测：原实现丢失 Status/ErrorMsg；空响应与错位 orderID 冒充撤单成功。
 - 修复后 `GOWORK=off go test ./... -count=1` 通过；replace 故障结果保持可解析。
