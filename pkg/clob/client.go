@@ -344,6 +344,10 @@ func (f *Facade) ListOrders(ctx context.Context, filter OrderFilter) ([]SdkOrder
 	if err := jsonUnmarshal(respBody, &or); err != nil {
 		return nil, "", fmt.Errorf("%w: decode OrdersResponse: %v", ErrUpstream, err)
 	}
+	// 缺少数据或分页字段不是“零活单”，调用方不得据此接受新代或恢复交易。
+	if or.Data == nil || or.NextCursor == nil {
+		return nil, "", fmt.Errorf("%w: incomplete OrdersResponse: data and next_cursor required", ErrUpstream)
+	}
 	out := make([]SdkOrder, 0)
 	if or.Data != nil {
 		for i := range *or.Data {

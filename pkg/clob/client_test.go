@@ -277,6 +277,34 @@ func TestGetBook_Happy(t *testing.T) {
 	}
 }
 
+func TestListOrders_RejectsIncompleteSnapshots(t *testing.T) {
+	for _, body := range []string{`{}`, `null`, `{"error":"unavailable"}`, `{"data":null,"next_cursor":"LTE="}`, `{"data":[]}`} {
+		t.Run(body, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) }))
+			defer srv.Close()
+			f, err := NewFacade(srv.URL, srv.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := f.ListOrders(context.Background(), OrderFilter{}); err == nil {
+				t.Fatal("incomplete snapshot reported as empty live set")
+			}
+		})
+	}
+}
+
+func TestListOrders_AcceptsExplicitEmptySnapshot(t *testing.T) {
+	for _, cursor := range []string{"", "LTE="} {
+		_, f := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[],"next_cursor":"` + cursor + `"}`))
+		})
+		orders, next, err := f.ListOrders(context.Background(), OrderFilter{})
+		if err != nil || len(orders) != 0 || next != cursor {
+			t.Fatalf("valid empty snapshot rejected: orders=%v next=%s err=%v", orders, next, err)
+		}
+	}
+}
+
 func TestListOrders_Happy(t *testing.T) {
 	_, f := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("market") != "0xmarket" {
